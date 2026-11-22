@@ -1,0 +1,50 @@
+[package]
+name = "neqo-backend"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+description = "Adapter for the Firefox network stack (NSS + neqo): TLS, HTTP/1.1, HTTP/3 and WebSocket client with a C ABI"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "neqo_backend"
+# rlib — для интеграционных тестов (tests/*.rs); артефакты для C/ABI —
+# по-прежнему .so (cdylib) и .a (staticlib).
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+# --- Пиннованные версии сетевого стека Firefox -------------------------------
+# neqo 0.34.0 — QUIC/HTTP3-стек Firefox.
+# nss-rs 0.16.3 — Gecko-биндинги NSS (используются neqo-транспортом).
+# ВАЖНО: nss-rs 0.16.3 требует NSS >= 3.130 (см. docs/BUILDING.md);
+# тарбол пиннится в scripts/fetch_nss.sh: NSS 3.134 (текущий mozilla-central).
+[dependencies]
+neqo-http3 = { git = "https://github.com/mozilla/neqo", tag = "v0.34.0" }
+neqo-transport = { git = "https://github.com/mozilla/neqo", tag = "v0.34.0" }
+neqo-common = { git = "https://github.com/mozilla/neqo", tag = "v0.34.0" }
+# Тот же spec, что и у neqo (git без тега) — иначе cargo посчитал бы это
+# двумя разными пакетами (дубликат крейта = конфликт типов AuthenticationStatus).
+# Точный коммит пиннится в Cargo.lock: cc5a70a7 == тег 0.16.3.
+# При обновлении neqo — обновить lock (cargo update -p nss-rs) вместе с ним.
+nss = { package = "nss-rs", git = "https://github.com/mozilla/nss-rs" }
+
+# Верификация сертификатов (обеих веток: TLS и QUIC) отдельным верификатором,
+# как это делает PSM в Firefox. Влияет только на локальную проверку цепочек,
+# не на параметры TLS.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }
+rustls-pemfile = "2"
+rustls-native-certs = "0.8"
+
+# Декомпрессия сжатых сертификатов (RFC 8879) — Firefox предлагает
+# zlib/brotli/zstd в compress_certificate, декодеры обязательны.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+brotli = "7"
+zstd = "0.13"
+
+[build-dependencies]
+bindgen = "0.71"
+pkg-config = "0.3"
+
+[profile.release]
+opt-level = 2
+debug = false
+strip = "debuginfo"
