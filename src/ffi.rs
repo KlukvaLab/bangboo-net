@@ -18,7 +18,7 @@
 //!  * жизненный цикл — через «билет» (RwLock в Arc): операции держат
 //!    read-lock, close/free — write-lock и только под ним освобождают
 //!    Box. Операция, начавшаяся до close, использует корректную память;
-//!  * close/free принимают адрес указателя (NbTls ** и т.п.) и
+//!  * close/free принимают адрес указателя (BnTls ** и т.п.) и
 //!    обнуляют его — повторный вызов безопасен (no-op), двойного
 //!    освобождения не будет;
 //!  * после bn_h3_close дескрипторы его запросов осиротевают:
@@ -75,30 +75,30 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// Opaque-типы для заголовка.
-pub struct NbTls {
+pub struct BnTls {
     inner: Mutex<TlsStream>,
     ticket: TicketRef,
 }
-pub struct NbWs {
+pub struct BnWs {
     inner: Mutex<WsStream>,
     ticket: TicketRef,
 }
-pub struct NbH3 {
+pub struct BnH3 {
     inner: Mutex<H3Connection>,
     /// Дескрипторы живых запросов (для осиротивания при close).
-    requests: Mutex<Vec<*mut NbH3Request>>,
+    requests: Mutex<Vec<*mut BnH3Request>>,
     ticket: TicketRef,
 }
-pub struct NbH3Request {
+pub struct BnH3Request {
     /// Соединение; NULL после bn_h3_close (осиротевший запрос).
-    conn: AtomicPtr<NbH3>,
+    conn: AtomicPtr<BnH3>,
     stream_id: u64,
     /// Клон билета соединения: пока запрос жив, ticket жив, а значит
     /// bn_h3_close дождётся окончания операций и только потом освободит
-    /// Box<NbH3>.
+    /// Box<BnH3>.
     ticket: TicketRef,
 }
-pub struct NbHttpResponse {
+pub struct BnHttpResponse {
     status: u16,
     headers: Vec<(String, Vec<u8>)>,
     body: Vec<u8>,
@@ -107,7 +107,7 @@ pub struct NbHttpResponse {
 
 /// Параметры подключения (общие для TLS/H3/WSS).
 #[repr(C)]
-pub struct NbConnectOptions {
+pub struct BnConnectOptions {
     /// Имя хоста (SNI, проверка сертификата). UTF-8.
     pub host: *const c_char,
     /// Предварительно разрешённый IP (Kotlin делает DNS); NULL → резолвим.
@@ -130,7 +130,7 @@ pub struct NbConnectOptions {
 }
 
 #[repr(C)]
-pub struct NbHeader {
+pub struct BnHeader {
     pub name: *const c_char,
     pub value: *const u8,
     pub value_len: u32,
@@ -369,7 +369,7 @@ pub unsafe extern "C" fn bn_version() -> *const c_char {
 // --- TLS ------------------------------------------------------------------------
 
 unsafe fn connect_options_parse(
-    o: *const NbConnectOptions,
+    o: *const BnConnectOptions,
 ) -> Result<(String, Option<std::net::SocketAddr>, Option<Vec<String>>, Option<Vec<u8>>, Option<Vec<u8>>, u32, u16, Profile), Error> {
     check_ptr(o)?;
     let o = &*o;
@@ -414,8 +414,8 @@ unsafe fn connect_options_parse(
 
 #[no_mangle]
 pub unsafe extern "C" fn bn_tls_connect(
-    opts: *const NbConnectOptions,
-) -> *mut NbTls {
+    opts: *const BnConnectOptions,
+) -> *mut BnTls {
     bn_guard(ptr::null_mut(), || {
         let parsed = match connect_options_parse(opts) {
             Ok(v) => v,
@@ -437,7 +437,7 @@ pub unsafe extern "C" fn bn_tls_connect(
             timeout: dur(timeout_ms),
         };
         match TlsStream::connect(&p) {
-            Ok(s) => Box::into_raw(Box::new(NbTls {
+            Ok(s) => Box::into_raw(Box::new(BnTls {
                 inner: Mutex::new(s),
                 ticket: new_ticket(),
             })),
@@ -451,7 +451,7 @@ pub unsafe extern "C" fn bn_tls_connect(
 
 #[no_mangle]
 pub unsafe extern "C" fn bn_tls_read(
-    s: *mut NbTls,
+    s: *mut BnTls,
     buf: *mut u8,
     len: u32,
     timeout_ms: u32,
@@ -481,7 +481,7 @@ pub unsafe extern "C" fn bn_tls_read(
 
 #[no_mangle]
 pub unsafe extern "C" fn bn_tls_write(
-    s: *mut NbTls,
+    s: *mut BnTls,
     buf: *const u8,
     len: u32,
     timeout_ms: u32,
@@ -497,7 +497,15 @@ pub unsafe extern "C" fn bn_tls_write(
         let _rd = rd(&s.ticket);
         let data = match blob(buf, len) {
             Some(d) => d,
-            None => return 0,
+            None => {
+                // NULL-буфер при len > 0 — ошибка вызова, а не «успешно
+                // отправлено 0 байт» (молчаливая потеря данных).
+                if len > 0 {
+                    set_last_error_str("bn_tls_write: NULL-буфер при len > 0");
+                    return -(ErrorCode::InvalidArgument as c_int);
+                }
+                &[]
+            }
         };
         match lock(&s.inner).write_all(data, dur(timeout_ms)) {
             Ok(()) => data.len() as c_int,
@@ -510,7 +518,7 @@ pub unsafe extern "C" fn bn_tls_write(
 /// было. Буфер мал → -13, нужный размер (с NUL) — в *needed.
 #[no_mangle]
 pub unsafe extern "C" fn bn_tls_alpn(
-    s: *mut NbTls,
+    s: *mut BnTls,
     out: *mut c_char,
     out_cap: u32,
     needed: *mut u32,
@@ -538,7 +546,7 @@ pub unsafe extern "C" fn bn_tls_alpn(
 /// Закрыть дескриптор TLS и обнулить указатель. Повторный вызов
 /// (в т.ч. с NULL) — безопасный no-op.
 #[no_mangle]
-pub unsafe extern "C" fn bn_tls_close(s: *mut *mut NbTls) {
+pub unsafe extern "C" fn bn_tls_close(s: *mut *mut BnTls) {
     bn_guard((), || {
         if s.is_null() {
             return;
@@ -548,7 +556,12 @@ pub unsafe extern "C" fn bn_tls_close(s: *mut *mut NbTls) {
             return;
         }
         let href = &*p;
-        let _wr = wr(&href.ticket); // ждём активные операции
+        // Клонируем Arc билета ДО взятия замка: локальные переменные
+        // дропаются в обратном порядке, поэтому write-замок снимется,
+        // пока клон ещё держит билет живым. Без клона unlock писал бы
+        // в слово состояния RwLock уже освобождённого билета (UAF).
+        let ticket = Arc::clone(&href.ticket);
+        let _wr = wr(&ticket); // ждём активные операции
         lock(&href.inner).close();
         drop(Box::from_raw(p));
         *s = ptr::null_mut();
@@ -559,15 +572,15 @@ pub unsafe extern "C" fn bn_tls_close(s: *mut *mut NbTls) {
 
 #[no_mangle]
 pub unsafe extern "C" fn bn_http1_fetch(
-    s: *mut NbTls,
+    s: *mut BnTls,
     method: *const c_char,
     target: *const c_char,
-    headers: *const NbHeader,
+    headers: *const BnHeader,
     nheaders: u32,
     body: *const u8,
     body_len: u32,
     timeout_ms: u32,
-) -> *mut NbHttpResponse {
+) -> *mut BnHttpResponse {
     bn_guard(ptr::null_mut(), || {
         let s = match s.as_ref() {
             Some(s) => s,
@@ -577,7 +590,7 @@ pub unsafe extern "C" fn bn_http1_fetch(
             }
         };
         let _rd = rd(&s.ticket);
-        let run = || -> Result<NbHttpResponse, Error> {
+        let run = || -> Result<BnHttpResponse, Error> {
             let method = cstr(method)?;
             let target = cstr(target)?;
             let mut hdrs: Vec<(String, String)> = Vec::new();
@@ -613,7 +626,7 @@ pub unsafe extern "C" fn bn_http1_fetch(
             let mut resp = http1::send_request_and_read_head(&mut g, &req, timeout)?;
             http1::read_body(&mut g, &mut resp, timeout)?;
             drop(g);
-            Ok(NbHttpResponse {
+            Ok(BnHttpResponse {
                 status: resp.status,
                 headers: resp
                     .headers
@@ -635,7 +648,7 @@ pub unsafe extern "C" fn bn_http1_fetch(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn bn_http1_response_status(r: *const NbHttpResponse) -> c_int {
+pub unsafe extern "C" fn bn_http1_response_status(r: *const BnHttpResponse) -> c_int {
     bn_guard(-(ErrorCode::InvalidArgument as c_int), || {
         match r.as_ref() {
             Some(r) => {
@@ -648,7 +661,7 @@ pub unsafe extern "C" fn bn_http1_response_status(r: *const NbHttpResponse) -> c
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn bn_http1_response_header_count(r: *const NbHttpResponse) -> c_int {
+pub unsafe extern "C" fn bn_http1_response_header_count(r: *const BnHttpResponse) -> c_int {
     bn_guard(-(ErrorCode::InvalidArgument as c_int), || {
         match r.as_ref() {
             Some(r) => {
@@ -666,7 +679,7 @@ pub unsafe extern "C" fn bn_http1_response_header_count(r: *const NbHttpResponse
 /// *needed_value (оба записываются при ошибке).
 #[no_mangle]
 pub unsafe extern "C" fn bn_http1_response_header(
-    r: *const NbHttpResponse,
+    r: *const BnHttpResponse,
     index: c_int,
     name_buf: *mut c_char,
     name_cap: u32,
@@ -703,7 +716,7 @@ pub unsafe extern "C" fn bn_http1_response_header(
 
 #[no_mangle]
 pub unsafe extern "C" fn bn_http1_response_body(
-    r: *const NbHttpResponse,
+    r: *const BnHttpResponse,
     out: *mut u8,
     out_cap: u32,
     needed: *mut u32,
@@ -726,7 +739,7 @@ pub unsafe extern "C" fn bn_http1_response_body(
 
 /// Освободить ответ и обнулить указатель. Повторный вызов — no-op.
 #[no_mangle]
-pub unsafe extern "C" fn bn_http1_response_free(r: *mut *mut NbHttpResponse) {
+pub unsafe extern "C" fn bn_http1_response_free(r: *mut *mut BnHttpResponse) {
     bn_guard((), || {
         if r.is_null() {
             return;
@@ -736,7 +749,9 @@ pub unsafe extern "C" fn bn_http1_response_free(r: *mut *mut NbHttpResponse) {
             return;
         }
         let href = &*p;
-        let _wr = wr(&href.ticket);
+        // Клон Arc билета — защита от UAF при unlock (см. bn_tls_close).
+        let ticket = Arc::clone(&href.ticket);
+        let _wr = wr(&ticket);
         drop(Box::from_raw(p));
         *r = ptr::null_mut();
     })
@@ -746,11 +761,11 @@ pub unsafe extern "C" fn bn_http1_response_free(r: *mut *mut NbHttpResponse) {
 
 #[no_mangle]
 pub unsafe extern "C" fn bn_ws_connect(
-    opts: *const NbConnectOptions,
+    opts: *const BnConnectOptions,
     path: *const c_char,
-    headers: *const NbHeader,
+    headers: *const BnHeader,
     nheaders: u32,
-) -> *mut NbWs {
+) -> *mut BnWs {
     bn_guard(ptr::null_mut(), || {
         let parsed = match connect_options_parse(opts) {
             Ok(v) => v,
@@ -794,7 +809,7 @@ pub unsafe extern "C" fn bn_ws_connect(
             addr: ip,
             port,
             // По умолчанию WSS предлагает [h2, http/1.1] (как Firefox), но
-            // пользовательский список из NbConnectOptions.alpn имеет приоритет
+            // пользовательский список из BnConnectOptions.alpn имеет приоритет
             // (например "http/1.1" для гарантии WSS на h2-серверах).
             alpn: alpn_refs.as_deref(),
             ech_config_list: ech.as_deref(),
@@ -802,7 +817,7 @@ pub unsafe extern "C" fn bn_ws_connect(
             timeout: dur(timeout_ms),
         };
         match WsStream::connect(&p, path, &hdrs_str, dur(timeout_ms)) {
-            Ok(w) => Box::into_raw(Box::new(NbWs {
+            Ok(w) => Box::into_raw(Box::new(BnWs {
                 inner: Mutex::new(w),
                 ticket: new_ticket(),
             })),
@@ -817,7 +832,7 @@ pub unsafe extern "C" fn bn_ws_connect(
 /// opcode: 1=text, 2=binary, 9=ping.
 #[no_mangle]
 pub unsafe extern "C" fn bn_ws_send(
-    w: *mut NbWs,
+    w: *mut BnWs,
     opcode: u8,
     data: *const u8,
     len: u32,
@@ -841,7 +856,17 @@ pub unsafe extern "C" fn bn_ws_send(
                 return -(ErrorCode::InvalidArgument as c_int);
             }
         };
-        let payload = blob(data, len).unwrap_or(&[]);
+        let payload = match blob(data, len) {
+            Some(d) => d,
+            None => {
+                // NULL-буфер при len > 0 — ошибка вызова (см. bn_tls_write).
+                if len > 0 {
+                    set_last_error_str("bn_ws_send: NULL-буфер при len > 0");
+                    return -(ErrorCode::InvalidArgument as c_int);
+                }
+                &[]
+            }
+        };
         match lock(&w.inner).send(op, payload, dur(timeout_ms)) {
             Ok(()) => payload.len() as c_int,
             Err(e) => err_code(&e),
@@ -855,7 +880,7 @@ pub unsafe extern "C" fn bn_ws_send(
 /// вернётся при следующем вызове).
 #[no_mangle]
 pub unsafe extern "C" fn bn_ws_recv(
-    w: *mut NbWs,
+    w: *mut BnWs,
     opcode_out: *mut u8,
     buf: *mut u8,
     buf_cap: u32,
@@ -900,7 +925,7 @@ pub unsafe extern "C" fn bn_ws_recv(
 /// обнуляет указатель. Повторный вызов — no-op.
 #[no_mangle]
 pub unsafe extern "C" fn bn_ws_close(
-    w: *mut *mut NbWs,
+    w: *mut *mut BnWs,
     code: u16,
     reason: *const c_char,
     timeout_ms: u32,
@@ -914,7 +939,9 @@ pub unsafe extern "C" fn bn_ws_close(
             return 0;
         }
         let wref = &*p;
-        let _wr = wr(&wref.ticket); // ждём активные операции
+        // Клон Arc билета — защита от UAF при unlock (см. bn_tls_close).
+        let ticket = Arc::clone(&wref.ticket);
+        let _wr = wr(&ticket); // ждём активные операции
         let reason = if reason.is_null() {
             String::new()
         } else {
@@ -933,7 +960,7 @@ pub unsafe extern "C" fn bn_ws_close(
 // --- HTTP/3 ----------------------------------------------------------------------
 
 #[no_mangle]
-pub unsafe extern "C" fn bn_h3_connect(opts: *const NbConnectOptions) -> *mut NbH3 {
+pub unsafe extern "C" fn bn_h3_connect(opts: *const BnConnectOptions) -> *mut BnH3 {
     bn_guard(ptr::null_mut(), || {
         let parsed = match connect_options_parse(opts) {
             Ok(v) => v,
@@ -952,7 +979,7 @@ pub unsafe extern "C" fn bn_h3_connect(opts: *const NbConnectOptions) -> *mut Nb
             timeout: dur(timeout_ms),
         };
         match H3Connection::connect(&p) {
-            Ok(c) => Box::into_raw(Box::new(NbH3 {
+            Ok(c) => Box::into_raw(Box::new(BnH3 {
                 inner: Mutex::new(c),
                 requests: Mutex::new(Vec::new()),
                 ticket: new_ticket(),
@@ -967,15 +994,15 @@ pub unsafe extern "C" fn bn_h3_connect(opts: *const NbConnectOptions) -> *mut Nb
 
 #[no_mangle]
 pub unsafe extern "C" fn bn_h3_fetch(
-    h: *mut NbH3,
+    h: *mut BnH3,
     method: *const c_char,
     target: *const c_char,
-    headers: *const NbHeader,
+    headers: *const BnHeader,
     nheaders: u32,
     body: *const u8,
     body_len: u32,
     timeout_ms: u32,
-) -> *mut NbH3Request {
+) -> *mut BnH3Request {
     bn_guard(ptr::null_mut(), || {
         let h = match h.as_ref() {
             Some(h) => h,
@@ -985,7 +1012,7 @@ pub unsafe extern "C" fn bn_h3_fetch(
             }
         };
         let _rd = rd(&h.ticket);
-        let run = || -> Result<*mut NbH3Request, Error> {
+        let run = || -> Result<*mut BnH3Request, Error> {
             let method = cstr(method)?;
             let target = cstr(target)?;
             let mut hdrs: Vec<(String, Vec<u8>)> = Vec::new();
@@ -1008,8 +1035,8 @@ pub unsafe extern "C" fn bn_h3_fetch(
                     dur(timeout_ms),
                 )?
             };
-            let req = Box::into_raw(Box::new(NbH3Request {
-                conn: AtomicPtr::new(h as *const NbH3 as *mut NbH3),
+            let req = Box::into_raw(Box::new(BnH3Request {
+                conn: AtomicPtr::new(h as *const BnH3 as *mut BnH3),
                 stream_id: stream_id.as_u64(),
                 ticket: h.ticket.clone(),
             }));
@@ -1027,11 +1054,11 @@ pub unsafe extern "C" fn bn_h3_fetch(
 }
 
 /// Доступ к соединению из дескриптора запроса под read-lock тикета:
-/// Box<NbH3> гарантированно жив на время замыкания (bn_h3_close
+/// Box<BnH3> гарантированно жив на время замыкания (bn_h3_close
 /// освобождает его только под write-lock).
 fn with_conn<T>(
-    r: &NbH3Request,
-    f: impl FnOnce(&NbH3) -> crate::error::Result<T>,
+    r: &BnH3Request,
+    f: impl FnOnce(&BnH3) -> crate::error::Result<T>,
 ) -> crate::error::Result<T> {
     let _rd = rd(&r.ticket);
     let conn = r.conn.load(Ordering::Acquire);
@@ -1045,7 +1072,7 @@ fn with_conn<T>(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn bn_h3_req_status(r: *const NbH3Request) -> c_int {
+pub unsafe extern "C" fn bn_h3_req_status(r: *const BnH3Request) -> c_int {
     bn_guard(-(ErrorCode::Panic as c_int), || {
         let r = match r.as_ref() {
             Some(r) => r,
@@ -1065,7 +1092,7 @@ pub unsafe extern "C" fn bn_h3_req_status(r: *const NbH3Request) -> c_int {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn bn_h3_req_header_count(r: *const NbH3Request) -> c_int {
+pub unsafe extern "C" fn bn_h3_req_header_count(r: *const BnH3Request) -> c_int {
     bn_guard(-(ErrorCode::Panic as c_int), || {
         let r = match r.as_ref() {
             Some(r) => r,
@@ -1089,7 +1116,7 @@ pub unsafe extern "C" fn bn_h3_req_header_count(r: *const NbH3Request) -> c_int 
 /// *needed_value (оба записываются при ошибке).
 #[no_mangle]
 pub unsafe extern "C" fn bn_h3_req_header(
-    r: *const NbH3Request,
+    r: *const BnH3Request,
     index: c_int,
     name_buf: *mut c_char,
     name_cap: u32,
@@ -1140,7 +1167,7 @@ pub unsafe extern "C" fn bn_h3_req_header(
 /// >=0 прочитано; 0 = тело закончено (fin); <0 ошибка.
 #[no_mangle]
 pub unsafe extern "C" fn bn_h3_req_read(
-    r: *mut NbH3Request,
+    r: *mut BnH3Request,
     buf: *mut u8,
     buf_cap: u32,
     timeout_ms: u32,
@@ -1177,7 +1204,7 @@ pub unsafe extern "C" fn bn_h3_req_read(
 /// Освободить дескриптор запроса и обнулить указатель. Безопасен и
 /// после bn_h3_close (осиротевший запрос), и повторно.
 #[no_mangle]
-pub unsafe extern "C" fn bn_h3_req_free(r: *mut *mut NbH3Request) {
+pub unsafe extern "C" fn bn_h3_req_free(r: *mut *mut BnH3Request) {
     bn_guard((), || {
         if r.is_null() {
             return;
@@ -1187,7 +1214,9 @@ pub unsafe extern "C" fn bn_h3_req_free(r: *mut *mut NbH3Request) {
             return;
         }
         let rref = &*p;
-        let _rd = rd(&rref.ticket);
+        // Клон Arc билета — защита от UAF при unlock (см. bn_tls_close).
+        let ticket = Arc::clone(&rref.ticket);
+        let _rd = rd(&ticket);
         let conn = rref.conn.load(Ordering::Acquire);
         if !conn.is_null() {
             let href = unsafe { &*conn };
@@ -1201,7 +1230,7 @@ pub unsafe extern "C" fn bn_h3_req_free(r: *mut *mut NbH3Request) {
 /// Токен resumption (0-RTT): >0 длина; 0 нет; мал буфер → -13 + *needed.
 #[no_mangle]
 pub unsafe extern "C" fn bn_h3_take_resumption_token(
-    h: *mut NbH3,
+    h: *mut BnH3,
     out: *mut u8,
     out_cap: u32,
     needed: *mut u32,
@@ -1228,7 +1257,7 @@ pub unsafe extern "C" fn bn_h3_take_resumption_token(
 /// Закрыть соединение HTTP/3, осиротить его запросы (их дескрипторы
 /// далее возвращают -9), освободить Box и обнулить указатель.
 #[no_mangle]
-pub unsafe extern "C" fn bn_h3_close(h: *mut *mut NbH3) {
+pub unsafe extern "C" fn bn_h3_close(h: *mut *mut BnH3) {
     bn_guard((), || {
         if h.is_null() {
             return;
@@ -1238,7 +1267,9 @@ pub unsafe extern "C" fn bn_h3_close(h: *mut *mut NbH3) {
             return;
         }
         let href = &*p;
-        let _wr = wr(&href.ticket); // ждём все операции по соединению
+        // Клон Arc билета — защита от UAF при unlock (см. bn_tls_close).
+        let ticket = Arc::clone(&href.ticket);
+        let _wr = wr(&ticket); // ждём все операции по соединению
         {
             // Осиротить запросы: conn = NULL → bn_h3_req_* вернут Closed.
             let mut reqs = lock(&href.requests);

@@ -69,7 +69,7 @@ impl WsStream {
     ) -> Result<WsStream> {
         // ALPN для WSS: как Firefox, предлагаем [h2, http/1.1]; WebSocket
         // в v1 идёт через http/1.1. Если вызывающий задал свой список в
-        // NbConnectOptions.alpn — используем его (например "http/1.1",
+        // BnConnectOptions.alpn — используем его (например "http/1.1",
         // чтобы гарантировать WSS на h2-серверах).
         let default_alpn: [&str; 2] = ["h2", "http/1.1"];
         let user_alpn: Vec<&str> = params.alpn.map(|s| s.to_vec()).unwrap_or_default();

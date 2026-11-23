@@ -78,7 +78,7 @@ NULL, EXPORT. Ошибки «cipher not implemented» при включении 
 
 ### Профили
 
-`NbConnectOptions.profile`:
+`BnConnectOptions.profile`:
 * `0` = **firefox-desktop**, `1` = **firefox-android**.
 
 Конфигурации совпадают: mlkem768x25519 включён и на Android —

@@ -161,7 +161,9 @@ Firefox предлагает zlib/brotli/zstd в `compress_certificate`. Есл�
   умеет, см. init.rs::ensure_nss).
 * Дескрипторы потокобезопасны: состояние под Mutex, вызовы из разных
   потоков сериализуются; close синхронизирован с операциями через
-  билет (RwLock). Детали — docs/SECURITY.md.
+  билет (RwLock) — защищена операция, уже захватившая read-lock;
+  конкурентные с close вызовы, ещё не захватившие замок, — на
+  контракте вызывающего. Детали — docs/SECURITY.md.
 * `bn_last_error_message()` — thread-local (слот Copy, без
   TLS-деструктора — безопасно для dlclose).
 

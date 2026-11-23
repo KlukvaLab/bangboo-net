@@ -56,27 +56,27 @@ docs/                — документация (RU)
 
 bn_init(NULL, 0);                       // корни из ОС; на Android — PEM
 
-NbConnectOptions opts = {0};
+BnConnectOptions opts = {0};
 opts.host = "example.org";
 opts.port = 443;
 opts.timeout_ms = 15000;
 opts.profile = 0;                       // 0 = firefox-desktop
 
 /* 1) сырой TLS (байтовый поток) */
-NbTls *tls = bn_tls_connect(&opts);
+BnTls *tls = bn_tls_connect(&opts);
 bn_tls_write(tls, req, req_len, 5000);
 int n = bn_tls_read(tls, buf, sizeof(buf), 5000);
 bn_tls_close(&tls);                     /* tls = NULL */
 
 /* 2) HTTP/3 */
-NbH3 *h3 = bn_h3_connect(&opts);
-NbH3Request *r = bn_h3_fetch(h3, "GET", "/", NULL, 0, NULL, 0, 15000);
+BnH3 *h3 = bn_h3_connect(&opts);
+BnH3Request *r = bn_h3_fetch(h3, "GET", "/", NULL, 0, NULL, 0, 15000);
 int status = bn_h3_req_status(r);       /* ждём != -1 через poll статуса */
 int body = bn_h3_req_read(r, buf, sizeof(buf), 5000);
 bn_h3_req_free(&r); bn_h3_close(&h3);   /* запрос можно освободить и после close */
 
 /* 3) WSS */
-NbWs *ws = bn_ws_connect(&opts, "/ws", NULL, 0);
+BnWs *ws = bn_ws_connect(&opts, "/ws", NULL, 0);
 bn_ws_send(ws, 1 /*text*/, "hello", 5, 5000);
 int len = bn_ws_recv(ws, &opcode, buf, sizeof(buf), 5000, NULL);
 bn_ws_close(&ws, 1000, "bye", 5000);    /* ws = NULL */

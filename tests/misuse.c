@@ -53,32 +53,32 @@ int main(int argc, char **argv) {
 
     /* close/free с NULL и NULL-слотами — no-op */
     bn_tls_close(NULL);
-    NbTls *nt = NULL; bn_tls_close(&nt);
-    NbWs *nw = NULL; CHECK(bn_ws_close(&nw, 1000, NULL, 100) == 0, "ws_close(NULL slot)");
-    NbH3 *nh = NULL; bn_h3_close(&nh);
-    NbH3Request *nr = NULL; bn_h3_req_free(&nr);
-    NbHttpResponse *nresp = NULL; bn_http1_response_free(&nresp);
+    BnTls *nt = NULL; bn_tls_close(&nt);
+    BnWs *nw = NULL; CHECK(bn_ws_close(&nw, 1000, NULL, 100) == 0, "ws_close(NULL slot)");
+    BnH3 *nh = NULL; bn_h3_close(&nh);
+    BnH3Request *nr = NULL; bn_h3_req_free(&nr);
+    BnHttpResponse *nresp = NULL; bn_http1_response_free(&nresp);
     printf("NULL-args OK\n");
 
     /* --- реальное соединение + лимиты ---------------------------------- */
     /* 16 байт: любая непустая страница не влезет → MessageTooLarge */
     bn_set_limits(16, 16, 16);
 
-    NbConnectOptions o;
+    BnConnectOptions o;
     memset(&o, 0, sizeof o);
     o.host = host;
     o.port = 443;
     o.timeout_ms = 15000;
     o.profile = 0;
 
-    NbTls *tls = bn_tls_connect(&o);
+    BnTls *tls = bn_tls_connect(&o);
     if (!tls) {
         printf("bn_tls_connect FAILED (сеть?): %s\n", bn_last_error_message());
         bn_set_limits(0, 0, 0);
         return 1;
     }
 
-    NbHttpResponse *resp = bn_http1_fetch(tls, "GET", "/", NULL, 0, NULL, 0, 15000);
+    BnHttpResponse *resp = bn_http1_fetch(tls, "GET", "/", NULL, 0, NULL, 0, 15000);
     CHECK(resp == NULL, "fetch под лимитом 16 байт → NULL");
     CHECK(bn_last_error_code() == 15,
           "код 15 MessageTooLarge, получен %d", bn_last_error_code());
@@ -96,10 +96,10 @@ int main(int argc, char **argv) {
     /* --- дефолты контракта: port=0 => 443, timeout_ms=0 => 30000 ------- */
     bn_set_limits(0, 0, 0); /* вернуть безлимит */
     {
-        NbConnectOptions od = o;
+        BnConnectOptions od = o;
         od.port = 0;
         od.timeout_ms = 0;
-        NbTls *td = bn_tls_connect(&od);
+        BnTls *td = bn_tls_connect(&od);
         CHECK(td != NULL, "port=0 → 443, timeout_ms=0 → 30000");
         if (td) {
             bn_tls_close(&td);
@@ -111,9 +111,9 @@ int main(int argc, char **argv) {
     }
 
     /* --- H3: use-after-close -------------------------------------------- */
-    NbH3 *h3 = bn_h3_connect(&o);
+    BnH3 *h3 = bn_h3_connect(&o);
     if (h3) {
-        NbH3Request *req = bn_h3_fetch(h3, "GET", "/", NULL, 0, NULL, 0, 15000);
+        BnH3Request *req = bn_h3_fetch(h3, "GET", "/", NULL, 0, NULL, 0, 15000);
         if (req) {
             /* закрыть СОЕДИНЕНИЕ, оставив запрос живым → осиротевание */
             bn_h3_close(&h3);
@@ -145,7 +145,7 @@ int main(int argc, char **argv) {
     CHECK(bn_last_error_code() == 3, "код 3 NotInitialized, получен %d",
           bn_last_error_code());
     CHECK(bn_init(NULL, 0) == 0, "повторный bn_init после shutdown");
-    NbTls *tls2 = bn_tls_connect(&o);
+    BnTls *tls2 = bn_tls_connect(&o);
     CHECK(tls2 != NULL, "connect после re-init");
     if (tls2) {
         bn_tls_close(&tls2);

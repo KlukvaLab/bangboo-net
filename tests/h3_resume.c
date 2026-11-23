@@ -7,8 +7,8 @@
 #include <stdlib.h>
 #include "bangboo_net.h"
 
-static int do_fetch(NbH3 *h3, const char *label) {
-    NbH3Request *r = bn_h3_fetch(h3, "GET", "/", NULL, 0, NULL, 0, 15000);
+static int do_fetch(BnH3 *h3, const char *label) {
+    BnH3Request *r = bn_h3_fetch(h3, "GET", "/", NULL, 0, NULL, 0, 15000);
     if (!r) {
         printf("[%s] bn_h3_fetch FAILED: %s\n", label, bn_last_error_message());
         return -1;
@@ -56,7 +56,7 @@ int main(int argc, char **argv) {
     int tok_len = 0;
 
     for (int i = 0; i < 2; i++) {
-        NbConnectOptions o;
+        BnConnectOptions o;
         memset(&o, 0, sizeof o);
         o.host = host;
         o.port = 443;
@@ -67,7 +67,7 @@ int main(int argc, char **argv) {
             o.resumption_token_len = (uint32_t)tok_len;
             printf("[2] передаю resumption-токен (%d байт)\n", tok_len);
         }
-        NbH3 *h3 = bn_h3_connect(&o);
+        BnH3 *h3 = bn_h3_connect(&o);
         if (!h3) {
             printf("[%d] bn_h3_connect FAILED: %s\n", i + 1, bn_last_error_message());
             return 2;

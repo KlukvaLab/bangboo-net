@@ -35,14 +35,14 @@ int main(int argc, char **argv) {
     CHECK(bn_tls_connect(NULL) == NULL, "bn_tls_connect(NULL) == NULL");
     CHECK(bn_last_error_code() == 2, "last_error_code == 2");
 
-    NbConnectOptions opts;
+    BnConnectOptions opts;
     memset(&opts, 0, sizeof(opts));
     opts.host = host;
     opts.port = 443;
     opts.timeout_ms = 15000;
     opts.profile = 0; /* firefox-desktop */
 
-    NbTls *tls = bn_tls_connect(&opts);
+    BnTls *tls = bn_tls_connect(&opts);
     if (!tls) {
         printf("bn_tls_connect FAILED: %s\n", bn_last_error_message());
         return 2;
@@ -64,10 +64,10 @@ int main(int argc, char **argv) {
     printf("alpn: %d (%s)\n", al, al > 0 ? alpn : "-");
 
     const char *ua = "bangboo-net-smoke/0.1";
-    NbHeader headers[1] = {
+    BnHeader headers[1] = {
         { "User-Agent", (const uint8_t *)ua, (uint32_t)strlen(ua) },
     };
-    NbHttpResponse *resp = bn_http1_fetch(
+    BnHttpResponse *resp = bn_http1_fetch(
         tls, "GET", "/", headers, 1, NULL, 0, 15000);
     if (!resp) {
         printf("bn_http1_fetch FAILED: %s\n", bn_last_error_message());
@@ -124,7 +124,7 @@ int main(int argc, char **argv) {
 
     /* keep-alive: второй запрос по ТОМУ ЖЕ дескриптору, без переподключения */
     {
-        NbHttpResponse *r2 = bn_http1_fetch(tls, "GET", "/", NULL, 0, NULL, 0, 15000);
+        BnHttpResponse *r2 = bn_http1_fetch(tls, "GET", "/", NULL, 0, NULL, 0, 15000);
         CHECK(r2 != NULL, "второй fetch по keep-alive (не NULL)");
         if (r2) {
             CHECK(bn_http1_response_status(r2) == 200,
@@ -147,13 +147,13 @@ int main(int argc, char **argv) {
     printf("SMOKE TEST TLS OK\n");
 
     /* HTTP/3 */
-    NbH3 *h3 = bn_h3_connect(&opts);
+    BnH3 *h3 = bn_h3_connect(&opts);
     if (!h3) {
         printf("bn_h3_connect FAILED: %s\n", bn_last_error_message());
         return 4;
     }
     printf("bn_h3_connect OK (QUIC handshake)\n");
-    NbH3Request *req = bn_h3_fetch(h3, "GET", "/", NULL, 0, NULL, 0, 15000);
+    BnH3Request *req = bn_h3_fetch(h3, "GET", "/", NULL, 0, NULL, 0, 15000);
     if (!req) {
         printf("bn_h3_fetch FAILED: %s\n", bn_last_error_message());
         bn_h3_close(&h3);

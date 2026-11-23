@@ -365,10 +365,13 @@ unsafe extern "C" fn decompress_zlib(
     output_len: usize,
     used_len: *mut usize,
 ) -> c_int {
-    decompress(input, output, output_len, used_len, |src, _dst| {
+    decompress(input, output, output_len, used_len, |src, dst| {
         let mut d = flate2::read::ZlibDecoder::new(src);
         let mut out = Vec::new();
-        d.read_to_end(&mut out)?;
+        // Потолок буфера: без него «сжатая бомба» (крошечный вход,
+        // распухающий при декодировании) уходит в память до проверки
+        // длины в decompress().
+        d.take((dst.len() + 1) as u64).read_to_end(&mut out)?;
         Ok(out)
     })
 }
@@ -379,10 +382,11 @@ unsafe extern "C" fn decompress_brotli(
     output_len: usize,
     used_len: *mut usize,
 ) -> c_int {
-    decompress(input, output, output_len, used_len, |src, _dst| {
+    decompress(input, output, output_len, used_len, |src, dst| {
         let mut out = Vec::with_capacity(64 * 1024);
         let mut d = brotli::Decompressor::new(src, 4096);
-        d.read_to_end(&mut out)?;
+        // Потолок буфера — как в decompress_zlib (см. комментарий там).
+        d.take((dst.len() + 1) as u64).read_to_end(&mut out)?;
         Ok(out)
     })
 }
@@ -393,9 +397,11 @@ unsafe extern "C" fn decompress_zstd(
     output_len: usize,
     used_len: *mut usize,
 ) -> c_int {
-    decompress(input, output, output_len, used_len, |src, _dst| {
+    decompress(input, output, output_len, used_len, |src, dst| {
         let mut d = zstd::bulk::Decompressor::new()?;
-        let out = d.decompress(src, 1 << 16)?;
+        // Потолок = буфер NSS: декодер не распухнет сверх dst, лишнее
+        // всё равно отбракует проверка длины в decompress().
+        let out = d.decompress(src, dst.len() as u64)?;
         Ok(out)
     })
 }

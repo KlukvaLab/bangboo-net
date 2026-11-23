@@ -265,6 +265,14 @@ impl H3Connection {
         if st.body.is_empty() {
             return Ok(0); // fin
         }
+        // Пустой буфер (buf_cap == 0, «драйв»-вызов bn_h3_req_read):
+        // данные уже ждём, копировать некуда. Возвращаем размер
+        // накопленного тела: >0 — «данные готовы, читайте обычным
+        // вызовом», 0 — только настоящий fin. Иначе 0 означал бы и
+        // «данные есть», и «тело закончилось» — неотличимо.
+        if buf.is_empty() {
+            return Ok(st.body.len());
+        }
         let n = buf.len().min(st.body.len());
         buf[..n].copy_from_slice(&st.body[..n]);
         st.body.drain(..n);
@@ -282,7 +290,7 @@ impl H3Connection {
     }
 
     pub fn close(&mut self) {
-        self.client.close(Instant::now(), 0, "nb");
+        self.client.close(Instant::now(), 0, "bn");
     }
 
     // --- драйвер -------------------------------------------------------------
@@ -489,6 +497,14 @@ impl H3Connection {
                 Http3ClientEvent::Reset { stream_id, .. }
                 | Http3ClientEvent::StopSending { stream_id, .. } => {
                     if let Some(st) = self.requests.get_mut(&stream_id) {
+                        // Обрыв потока — не нормальный конец тела: без
+                        // ошибки обрезанный ответ выглядел бы успешным.
+                        // Свой error (например, лимит тела) не затираем.
+                        if st.error.is_none() {
+                            st.error = Some(Error::generic(
+                                "поток HTTP/3 сброшен пиром (Reset/StopSending)",
+                            ));
+                        }
                         st.body_fin = true;
                     }
                 }
@@ -499,8 +515,14 @@ impl H3Connection {
                 | Http3ClientEvent::StateChange(Http3State::ZeroRtt) => {}
                 Http3ClientEvent::ZeroRttRejected => {
                     // 0-RTT отклонён — запросы придётся повторить;
-                    // для v1 сигнализируем ошибкой активные запросы.
+                    // сигнализируем ошибкой активные запросы (раньше
+                    // ставился только fin без ошибки).
                     for st in self.requests.values_mut() {
+                        if st.error.is_none() {
+                            st.error = Some(Error::generic(
+                                "0-RTT отклонён сервером: запрос не дошёл, повторите",
+                            ));
+                        }
                         st.body_fin = true;
                     }
                 }

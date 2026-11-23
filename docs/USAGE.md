@@ -58,7 +58,7 @@ bn_init ──► bn_tls_connect ──► bn_tls_read/write ──► bn_tls_cl
 
 **Таймауты:** все параметры `timeout_ms`: `0` → 30000 мс; значения
 выше 24 часов урезаются до 24 часов (защита от переполнения
-PRIntervalTime в NSPR). **Порты:** `NbConnectOptions.port = 0` → 443.
+PRIntervalTime в NSPR). **Порты:** `BnConnectOptions.port = 0` → 443.
 
 ## bn_init: корневые сертификаты
 
@@ -89,12 +89,12 @@ nbInit(pem.toByteArray(), pem.size)
 По договорённости, **Kotlin-слой приложения сам** автоматически
 подставляет параметры:
 
-* `NbConnectOptions.ech_config_list` — байты `ech=` из DNS HTTPS-записи
+* `BnConnectOptions.ech_config_list` — байты `ech=` из DNS HTTPS-записи
   (resolver приложения). Нет записи → NULL (библиотека всё равно шлёт
   GREASE ECH, как Firefox);
-* `NbConnectOptions.ip` — предрезолвленный адрес (если приложение хочет
+* `BnConnectOptions.ip` — предрезолвленный адрес (если приложение хочет
   свой DNS/кеш). NULL → библиотека резолвит `host`;
-* `NbConnectOptions.profile` — 0 (desktop) / 1 (android) — выбирается
+* `BnConnectOptions.profile` — 0 (desktop) / 1 (android) — выбирается
   по платформе;
 * `resumption_token` — 0-RTT токен из прошлого соединения
   (`bn_h3_take_resumption_token`), если приложение хочет ускорить.
@@ -117,13 +117,13 @@ nbInit(pem.toByteArray(), pem.size)
 ## C: сырой TLS-туннель (байтовый поток)
 
 ```c
-NbConnectOptions o = {0};
+BnConnectOptions o = {0};
 o.host = "target.example";
 o.port = 443;
 o.timeout_ms = 15000;
 o.profile = 0;
 
-NbTls *t = bn_tls_connect(&o);
+BnTls *t = bn_tls_connect(&o);
 if (!t) die(bn_last_error_message());
 
 /* дальше — произвольный байтовый протокол поверх TLS */
@@ -138,11 +138,11 @@ ALPN при необходимости: `o.alpn = "h2,http/1.1"` (wire-форм�
 ## C: HTTP/1.1 (полный запрос-ответ)
 
 ```c
-NbHeader hs[] = {
+BnHeader hs[] = {
     { "User-Agent", ua, strlen(ua) },
     { "Accept", "*/*", 3 },
 };
-NbHttpResponse *r = bn_http1_fetch(t, "POST", "/api/v1/x",
+BnHttpResponse *r = bn_http1_fetch(t, "POST", "/api/v1/x",
                                    hs, 2, body, body_len, 15000);
 int status = bn_http1_response_status(r);          /* 200 */
 int n = bn_http1_response_header_count(r);
@@ -155,7 +155,7 @@ bn_http1_response_free(&r);                        /* r = NULL */
 Тело ответа буферизуется целиком (v1); для стриминга используйте
 сырой TLS + свой HTTP, или HTTP/3-путь (он стриминговый).
 
-**KEEP-ALIVE:** несколько `bn_http1_fetch` по одному дескриптору `NbTls`
+**KEEP-ALIVE:** несколько `bn_http1_fetch` по одному дескриптору `BnTls`
 работают без переподключения (запрос идёт с `Connection: keep-alive`,
 тело читается ровно по Content-Length/chunked, включая трейлеры).
 Соединение становится одноразовым, если сервер ответил
@@ -165,8 +165,8 @@ bn_http1_response_free(&r);                        /* r = NULL */
 ## C: HTTP/3 (стриминговое тело)
 
 ```c
-NbH3 *h = bn_h3_connect(&o);
-NbH3Request *r = bn_h3_fetch(h, "GET", "/big.bin", NULL, 0, NULL, 0, 15000);
+BnH3 *h = bn_h3_connect(&o);
+BnH3Request *r = bn_h3_fetch(h, "GET", "/big.bin", NULL, 0, NULL, 0, 15000);
 
 int status = bn_h3_req_status(r);            /* -1, пока заголовки не пришли */
 uint8_t chunk[16384];
@@ -190,11 +190,11 @@ bn_h3_close(&h);
 ## C: WebSocket (WSS)
 
 ```c
-NbHeader hs[] = {
+BnHeader hs[] = {
     { "User-Agent", ua, strlen(ua) },
     { "Sec-WebSocket-Protocol", "chat", 4 },
 };
-NbWs *w = bn_ws_connect(&o, "/ws", hs, 2);
+BnWs *w = bn_ws_connect(&o, "/ws", hs, 2);
 
 bn_ws_send(w, 1 /* text */, "hello", 5, 5000);
 
@@ -221,7 +221,7 @@ ALPN: по умолчанию WSS предлагает `[h2, http/1.1]` (как 
 Библиотека — обычный C ABI, поэтому на JVM/Desktop достаточно
 [JNA](https://github.com/java-native-access/jna): функции из
 `ffi/bangboo_net.h` объявляются в интерфейсе `Library`, структуры
-`NbConnectOptions`/`NbHeader` — классами `Structure` с
+`BnConnectOptions`/`BnHeader` — классами `Structure` с
 `@Structure.FieldOrder` в точном порядке полей C (совпадение layout
 проверено: 72/24 байта на x86_64).
 
