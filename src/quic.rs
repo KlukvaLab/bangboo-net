@@ -421,7 +421,7 @@ impl H3Connection {
                     let status = if verify::verify_server_chain(&chain, &self.host).is_ok() {
                         nss::AuthenticationStatus::Ok
                     } else {
-                        // Детали ошибки уже в nb_last_error_message;
+                        // Детали ошибки уже в bn_last_error_message;
                         // neqo требует лишь «доверяем/не доверяем».
                         nss::AuthenticationStatus::CertUntrusted
                     };
@@ -454,7 +454,7 @@ impl H3Connection {
                     }
                 }
                 Http3ClientEvent::DataReadable { stream_id } => {
-                    // Лимит тела: копим не больше nb_set_limits; при
+                    // Лимит тела: копим не больше bn_set_limits; при
                     // превышении гасим поток и фиксируем ошибку запроса
                     // (иначе сервер мог бы занять всю память процесса).
                     let max = crate::limits::h3_response();
@@ -468,7 +468,7 @@ impl H3Connection {
                             if st.body.len() + n > max {
                                 st.error = Some(Error::too_large(format!(
                                     "тело HTTP/3-ответа превышает лимит {max} байт \
-                                     (nb_set_limits)"
+                                     (bn_set_limits)"
                                 )));
                                 st.body_fin = true;
                                 // H3_REQUEST_CANCELLED (RFC 9114): просим

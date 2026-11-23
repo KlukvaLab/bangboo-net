@@ -12,9 +12,9 @@
 //!
 //! `shutdown()` — настоящий (в отличие от более ранних версий):
 //! сбрасывает верификатор и, если NSS подняли мы (а не хост-приложение),
-//! вызывает `NSS_Shutdown`. После успешного `nb_shutdown` библиотеку
-//! можно инициализировать снова (`nb_init`) и .so можно выгружать
-//! (dlclose). Все дескрипторы должны быть закрыты ДО `nb_shutdown`.
+//! вызывает `NSS_Shutdown`. После успешного `bn_shutdown` библиотеку
+//! можно инициализировать снова (`bn_init`) и .so можно выгружать
+//! (dlclose). Все дескрипторы должны быть закрыты ДО `bn_shutdown`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -71,7 +71,7 @@ pub fn global() -> Result<Arc<WebPkiServerVerifier>> {
         .ok_or_else(|| {
             Error::new(
                 ErrorCode::NotInitialized,
-                "nb_init не был вызван или уже был nb_shutdown",
+                "bn_init не был вызван или уже был bn_shutdown",
             )
         })
 }
@@ -157,7 +157,7 @@ fn init_inner(pem_roots: Option<&[u8]>) -> Result<GlobalContext> {
 /// процесс (OnceLock внутри nss-rs). Если NSS уже поднят хост-приложением,
 /// nss-rs возвращает `External` и мы НЕ становимся владельцем.
 ///
-/// Особый случай — повторный `nb_init` после нашего `nb_shutdown`:
+/// Особый случай — повторный `bn_init` после нашего `bn_shutdown`:
 /// OnceLock nss-rs уже «сыт» и NSS повторно не поднимает, хотя
 /// `NSS_Shutdown` его выключил. Тогда поднимаем NSS напрямую
 /// (те же вызовы, что делает nss-rs), не полагаясь на его состояние.
@@ -165,7 +165,7 @@ fn ensure_nss() -> Result<()> {
     let was_up = unsafe { nssx::NSS_IsInitialized() } != 0;
     nss::init().map_err(|e| Error::new(ErrorCode::Generic, format!("NSS init: {e:?}")))?;
     if !was_up && unsafe { nssx::NSS_IsInitialized() } == 0 {
-        // Re-init после nb_shutdown: NSS выключен, а nss-rs не знает.
+        // Re-init после bn_shutdown: NSS выключен, а nss-rs не знает.
         if unsafe { nssx::NSS_VersionCheck(c"3.130".as_ptr()) } == 0 {
             return Err(Error::new(
                 ErrorCode::Unsupported,
@@ -175,19 +175,19 @@ fn ensure_nss() -> Result<()> {
         if unsafe { nssx::NSS_NoDB_Init(std::ptr::null()) } != SECSuccess {
             return Err(Error::new(
                 ErrorCode::Generic,
-                "NSS_NoDB_Init (re-init после nb_shutdown)",
+                "NSS_NoDB_Init (re-init после bn_shutdown)",
             ));
         }
         if unsafe { nssx::NSS_SetDomesticPolicy() } != SECSuccess {
             return Err(Error::new(
                 ErrorCode::Generic,
-                "NSS_SetDomesticPolicy (re-init после nb_shutdown)",
+                "NSS_SetDomesticPolicy (re-init после bn_shutdown)",
             ));
         }
     }
     if !was_up {
         // Мы подняли NSS (сейчас или nss-rs-ом по нашей просьбе) —
-        // nb_shutdown имеет право его выключить.
+        // bn_shutdown имеет право его выключить.
         NSS_OWNED.store(true, Ordering::Release);
     }
     Ok(())

@@ -1,4 +1,4 @@
-# neqo-backend
+# Bangboo Net
 
 Прокладка для использования сетевого стека **Firefox** (NSS + neqo):
 Rust-библиотека с C ABI — TLS, HTTP/1.1, HTTP/3 и WebSocket-клиент для
@@ -34,7 +34,7 @@ NSS и neqo, — и даёт три транспортных пути:
 ## Структура
 
 ```
-ffi/neqo_backend.h   — заголовок C ABI (для JNA и C)
+ffi/bangboo_net.h   — заголовок C ABI (для JNA и C)
 src/
   ffi.rs             — extern "C" слой (изолирует ABI от ядра)
   profile.rs         — TLS-профиль Firefox (все константы с источниками)
@@ -52,9 +52,9 @@ docs/                — документация (RU)
 ## Быстрый старт (C)
 
 ```c
-#include "neqo_backend.h"
+#include "bangboo_net.h"
 
-nb_init(NULL, 0);                       // корни из ОС; на Android — PEM
+bn_init(NULL, 0);                       // корни из ОС; на Android — PEM
 
 NbConnectOptions opts = {0};
 opts.host = "example.org";
@@ -63,23 +63,23 @@ opts.timeout_ms = 15000;
 opts.profile = 0;                       // 0 = firefox-desktop
 
 /* 1) сырой TLS (байтовый поток) */
-NbTls *tls = nb_tls_connect(&opts);
-nb_tls_write(tls, req, req_len, 5000);
-int n = nb_tls_read(tls, buf, sizeof(buf), 5000);
-nb_tls_close(&tls);                     /* tls = NULL */
+NbTls *tls = bn_tls_connect(&opts);
+bn_tls_write(tls, req, req_len, 5000);
+int n = bn_tls_read(tls, buf, sizeof(buf), 5000);
+bn_tls_close(&tls);                     /* tls = NULL */
 
 /* 2) HTTP/3 */
-NbH3 *h3 = nb_h3_connect(&opts);
-NbH3Request *r = nb_h3_fetch(h3, "GET", "/", NULL, 0, NULL, 0, 15000);
-int status = nb_h3_req_status(r);       /* ждём != -1 через poll статуса */
-int body = nb_h3_req_read(r, buf, sizeof(buf), 5000);
-nb_h3_req_free(&r); nb_h3_close(&h3);   /* запрос можно освободить и после close */
+NbH3 *h3 = bn_h3_connect(&opts);
+NbH3Request *r = bn_h3_fetch(h3, "GET", "/", NULL, 0, NULL, 0, 15000);
+int status = bn_h3_req_status(r);       /* ждём != -1 через poll статуса */
+int body = bn_h3_req_read(r, buf, sizeof(buf), 5000);
+bn_h3_req_free(&r); bn_h3_close(&h3);   /* запрос можно освободить и после close */
 
 /* 3) WSS */
-NbWs *ws = nb_ws_connect(&opts, "/ws", NULL, 0);
-nb_ws_send(ws, 1 /*text*/, "hello", 5, 5000);
-int len = nb_ws_recv(ws, &opcode, buf, sizeof(buf), 5000, NULL);
-nb_ws_close(&ws, 1000, "bye", 5000);    /* ws = NULL */
+NbWs *ws = bn_ws_connect(&opts, "/ws", NULL, 0);
+bn_ws_send(ws, 1 /*text*/, "hello", 5, 5000);
+int len = bn_ws_recv(ws, &opcode, buf, sizeof(buf), 5000, NULL);
+bn_ws_close(&ws, 1000, "bye", 5000);    /* ws = NULL */
 ```
 
 Список функций, коды ошибок, ECH, 0-RTT-токены и использование из
@@ -117,7 +117,7 @@ scripts/build_android.sh arm64 # и/или: arm32
   downgrade-check.
 * Устойчивый C ABI: паники перехвачены (catch_unwind, -14), дескрипторы
   потокобезопасны, close/free обнуляют указатель, лимиты размеров
-  (`nb_set_limits`, -15), `nb_shutdown` чистит NSS для dlclose —
+  (`bn_set_limits`, -15), `bn_shutdown` чистит NSS для dlclose —
   см. [docs/SECURITY.md](docs/SECURITY.md).
 * ECH (реальный + GREASE) — передаётся аргументами методов; Kotlin-слой
   приложения сам получает ECHConfigList из DNS и подставляет.
@@ -126,8 +126,8 @@ scripts/build_android.sh arm64 # и/или: arm32
 
 ## Проверено (Linux x86_64, машина сборки)
 
-Е2Е-тест `tests/smoke.c` (компилируется с `ffi/neqo_backend.h`, линкуется
-с собранной `libneqo_backend.so`):
+Е2Е-тест `tests/smoke.c` (компилируется с `ffi/bangboo_net.h`, линкуется
+с собранной `libbangboo_net.so`):
 
 | Проверка | Результат |
 |---|---|

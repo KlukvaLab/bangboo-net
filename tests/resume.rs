@@ -10,9 +10,9 @@
 use std::net::ToSocketAddrs;
 use std::time::Duration;
 
-use neqo_backend::nssx;
-use neqo_backend::profile::Profile;
-use neqo_backend::tls::{ConnectParams, TlsStream};
+use bangboo_net::nssx;
+use bangboo_net::profile::Profile;
+use bangboo_net::tls::{ConnectParams, TlsStream};
 
 const HOST: &str = "example.com";
 
@@ -41,8 +41,8 @@ fn one_round(addr: std::net::SocketAddr) {
 #[test]
 #[ignore = "network"]
 fn tls_resumption_via_nss_client_cache() {
-    // Инициализация (аналог nb_init(NULL,0)): корни из хранилища ОС.
-    neqo_backend::init::init(None).expect("init");
+    // Инициализация (аналог bn_init(NULL,0)): корни из хранилища ОС.
+    bangboo_net::init::init(None).expect("init");
 
     // Фиксируем адрес: кеш NSS ключуется адресом+портом, а DNS
     // round-robin на второй резолв может вернуть другой IP.

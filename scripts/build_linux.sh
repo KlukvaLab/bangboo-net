@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Сборка neqo-backend для Desktop Linux.
+# Сборка bangboo-net для Desktop Linux.
 # Использование: scripts/build_linux.sh [x86_64|i686|aarch64]
 #
-# Выход: dist/linux-<arch>/libneqo_backend.so (+ NSS-библиотеки рядом,
-#        rpath=$ORIGIN) и libneqo_backend.a.
+# Выход: dist/linux-<arch>/libbangboo_net.so (+ NSS-библиотеки рядом,
+#        rpath=$ORIGIN) и libbangboo_net.a.
 set -euo pipefail
 
 ARCH="${1:-x86_64}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-export NSS_DEPS="${NSS_DEPS:-$HOME/neqo-backend-deps}"
+export NSS_DEPS="${NSS_DEPS:-$HOME/bangboo-net-deps}"
 # Версия NSS (пиннинг — scripts/fetch_nss.sh). Каталог nss/ внутри
 # может быть удалён после сборки NSS (NSS_PREBUILT=1): наш build.rs и
 # nss-rs читают только $NSS_DIR/../dist; для assert is_dir() в nss-rs
@@ -43,9 +43,9 @@ cargo build --release --target "$TARGET"
 
 OUT="$HERE/dist/linux-$ARCH"
 mkdir -p "$OUT"
-cp "target/$TARGET/release/libneqo_backend.so" "$OUT/"
-[ -f "target/$TARGET/release/libneqo_backend.a" ] && \
-    cp "target/$TARGET/release/libneqo_backend.a" "$OUT/"
+cp "target/$TARGET/release/libbangboo_net.so" "$OUT/"
+[ -f "target/$TARGET/release/libbangboo_net.a" ] && \
+    cp "target/$TARGET/release/libbangboo_net.a" "$OUT/"
 
 # NSS runtime: кладём собранные нами .so рядом и ставим rpath=$ORIGIN,
 # чтобы не зависеть от системного NSS (обычно старее пинна).
@@ -81,7 +81,7 @@ fi
 # Для кросс-таргетов NSS-библиотеки нужно собрать отдельно тем же скриптом
 # с CC/CXX/AR кросс-тулчейна — см. docs/BUILDING.md «Кросс-сборка NSS».
 
-cp "$HERE/ffi/neqo_backend.h" "$OUT/"
+cp "$HERE/ffi/bangboo_net.h" "$OUT/"
 
 echo ">> Готово: $OUT"
 ls -la "$OUT"

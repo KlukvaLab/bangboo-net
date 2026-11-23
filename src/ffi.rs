@@ -1,9 +1,9 @@
-//! C ABI (см. ffi/neqo_backend.h).
+//! C ABI (см. ffi/bangboo_net.h).
 //!
 //! Правила:
 //!  * дескрипторы — указатели на Box<T>; NULL недопустим;
 //!  * отрицательный возврат — код ошибки из `ErrorCode`;
-//!    детали — nb_last_error_message();
+//!    детали — bn_last_error_message();
 //!  * строки — UTF-8 с завершающим NUL, валидны до следующего вызова
 //!    библиотеки в этом потоке;
 //!  * буферы «на выход»: при нехватке места возвращается -13
@@ -21,8 +21,8 @@
 //!  * close/free принимают адрес указателя (NbTls ** и т.п.) и
 //!    обнуляют его — повторный вызов безопасен (no-op), двойного
 //!    освобождения не будет;
-//!  * после nb_h3_close дескрипторы его запросов осиротевают:
-//!    nb_h3_req_* возвращают -9 (Closed), а не падают на висячем
+//!  * после bn_h3_close дескрипторы его запросов осиротевают:
+//!    bn_h3_req_* возвращают -9 (Closed), а не падают на висячем
 //!    указателе.
 
 use std::cell::RefCell;
@@ -90,11 +90,11 @@ pub struct NbH3 {
     ticket: TicketRef,
 }
 pub struct NbH3Request {
-    /// Соединение; NULL после nb_h3_close (осиротевший запрос).
+    /// Соединение; NULL после bn_h3_close (осиротевший запрос).
     conn: AtomicPtr<NbH3>,
     stream_id: u64,
     /// Клон билета соединения: пока запрос жив, ticket жив, а значит
-    /// nb_h3_close дождётся окончания операций и только потом освободит
+    /// bn_h3_close дождётся окончания операций и только потом освободит
     /// Box<NbH3>.
     ticket: TicketRef,
 }
@@ -118,7 +118,7 @@ pub struct NbConnectOptions {
     /// ECHConfigList (сырые байты из DNS HTTPS-записи); NULL → без ECH.
     pub ech_config_list: *const u8,
     pub ech_config_list_len: u32,
-    /// Токен resumption QUIC (nb_h3_take_resumption_token).
+    /// Токен resumption QUIC (bn_h3_take_resumption_token).
     pub resumption_token: *const u8,
     pub resumption_token_len: u32,
     /// Таймаут connect+handshake, мс.
@@ -141,13 +141,13 @@ pub struct NbHeader {
 /// Обёртка всех экспортов: паника НЕ пересекает границу C ABI
 /// (unwind через extern "C" — UB: ломает стек C++/ART). Вместо этого
 /// вызывающий получает fallback (обычно -14) и сообщение через
-/// nb_last_error_message.
+/// bn_last_error_message.
 ///
 /// На входе КАЖДОЙ операции слот последней ошибки очищается: слот
 /// всегда отражает только последний вызов в этом потоке (свежесть
-/// для многопоточных/JNA-сценариев; чтение — nb_last_error_code /
-/// nb_last_error_message, оба не разрушающие).
-fn nb_guard<T>(fallback: T, f: impl FnOnce() -> T) -> T {
+/// для многопоточных/JNA-сценариев; чтение — bn_last_error_code /
+/// bn_last_error_message, оба не разрушающие).
+fn bn_guard<T>(fallback: T, f: impl FnOnce() -> T) -> T {
     crate::error::clear_last_error();
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(v) => v,
@@ -296,8 +296,8 @@ unsafe fn copy_header_pair(
 // --- init / версии ---------------------------------------------------------------
 
 #[no_mangle]
-pub unsafe extern "C" fn nb_init(pem_roots: *const u8, pem_roots_len: u32) -> c_int {
-    nb_guard(-1, || {
+pub unsafe extern "C" fn bn_init(pem_roots: *const u8, pem_roots_len: u32) -> c_int {
+    bn_guard(-1, || {
         let roots = blob(pem_roots, pem_roots_len);
         match crate::init::init(roots) {
             Ok(()) => 0,
@@ -308,37 +308,37 @@ pub unsafe extern "C" fn nb_init(pem_roots: *const u8, pem_roots_len: u32) -> c_
 
 /// Выключить библиотеку: сбросить верификатор и NSS (если подняли мы).
 /// Все дескрипторы должны быть закрыты заранее; иначе ошибка (в этом
-/// случае dlclose .so нельзя). После успеха возможен повторный nb_init.
+/// случае dlclose .so нельзя). После успеха возможен повторный bn_init.
 #[no_mangle]
-pub unsafe extern "C" fn nb_shutdown() -> c_int {
-    nb_guard(-1, || match crate::init::shutdown() {
+pub unsafe extern "C" fn bn_shutdown() -> c_int {
+    bn_guard(-1, || match crate::init::shutdown() {
         Ok(()) => 0,
         Err(e) => err_code(&e),
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nb_last_error_message() -> *const c_char {
-    nb_last_error_message_impl()
+pub unsafe extern "C" fn bn_last_error_message() -> *const c_char {
+    bn_last_error_message_impl()
 }
 
 /// Код последней ошибки в этом потоке: 1..=15 (ErrorCode) или 0, если
 /// ошибки не было. Для функций, возвращающих указатель (NULL при ошибке):
-/// вызывайте ДО nb_last_error_message — тот очищает слот.
+/// вызывайте ДО bn_last_error_message — тот очищает слот.
 #[no_mangle]
-pub unsafe extern "C" fn nb_last_error_code() -> c_int {
+pub unsafe extern "C" fn bn_last_error_code() -> c_int {
     crate::error::last_error_code()
 }
 
 /// Лимиты размеров (анти-DoS): тело HTTP/1.1-ответа, сообщение WS,
 /// ответ HTTP/3. 0 = без лимита. По умолчанию 64 МиБ.
 #[no_mangle]
-pub unsafe extern "C" fn nb_set_limits(
+pub unsafe extern "C" fn bn_set_limits(
     max_http1_body: u32,
     max_ws_message: u32,
     max_h3_response: u32,
 ) -> c_int {
-    nb_guard(-1, || {
+    bn_guard(-1, || {
         limits::set(
             max_http1_body as usize,
             max_ws_message as usize,
@@ -349,8 +349,8 @@ pub unsafe extern "C" fn nb_set_limits(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nb_version() -> *const c_char {
-    nb_guard(ptr::null(), || {
+pub unsafe extern "C" fn bn_version() -> *const c_char {
+    bn_guard(ptr::null(), || {
         let v = crate::version_string();
         VERSION_BUF.with(|buf| {
             let mut b = buf.borrow_mut();
@@ -413,10 +413,10 @@ unsafe fn connect_options_parse(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nb_tls_connect(
+pub unsafe extern "C" fn bn_tls_connect(
     opts: *const NbConnectOptions,
 ) -> *mut NbTls {
-    nb_guard(ptr::null_mut(), || {
+    bn_guard(ptr::null_mut(), || {
         let parsed = match connect_options_parse(opts) {
             Ok(v) => v,
             Err(e) => {
@@ -450,17 +450,17 @@ pub unsafe extern "C" fn nb_tls_connect(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nb_tls_read(
+pub unsafe extern "C" fn bn_tls_read(
     s: *mut NbTls,
     buf: *mut u8,
     len: u32,
     timeout_ms: u32,
 ) -> c_int {
-    nb_guard(-(ErrorCode::Panic as c_int), || {
+    bn_guard(-(ErrorCode::Panic as c_int), || {
         let s = match s.as_ref() {
             Some(s) => s,
             None => {
-                set_last_error_str("nb_tls_read: NULL");
+                set_last_error_str("bn_tls_read: NULL");
                 return -(ErrorCode::InvalidArgument as c_int);
             }
         };
@@ -480,17 +480,17 @@ pub unsafe extern "C" fn nb_tls_read(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nb_tls_write(
+pub unsafe extern "C" fn bn_tls_write(
     s: *mut NbTls,
     buf: *const u8,
     len: u32,
     timeout_ms: u32,
 ) -> c_int {
-    nb_guard(-(ErrorCode::Panic as c_int), || {
+    bn_guard(-(ErrorCode::Panic as c_int), || {
         let s = match s.as_ref() {
             Some(s) => s,
             None => {
-                set_last_error_str("nb_tls_write: NULL");
+                set_last_error_str("bn_tls_write: NULL");
                 return -(ErrorCode::InvalidArgument as c_int);
             }
         };
@@ -509,17 +509,17 @@ pub unsafe extern "C" fn nb_tls_write(
 /// Согласованный ALPN. Возвращает длину (без NUL) или 0, если ALPN не
 /// было. Буфер мал → -13, нужный размер (с NUL) — в *needed.
 #[no_mangle]
-pub unsafe extern "C" fn nb_tls_alpn(
+pub unsafe extern "C" fn bn_tls_alpn(
     s: *mut NbTls,
     out: *mut c_char,
     out_cap: u32,
     needed: *mut u32,
 ) -> c_int {
-    nb_guard(-(ErrorCode::Panic as c_int), || {
+    bn_guard(-(ErrorCode::Panic as c_int), || {
         let s = match s.as_ref() {
             Some(s) => s,
             None => {
-                set_last_error_str("nb_tls_alpn: NULL");
+                set_last_error_str("bn_tls_alpn: NULL");
                 return -(ErrorCode::InvalidArgument as c_int);
             }
         };
@@ -538,8 +538,8 @@ pub unsafe extern "C" fn nb_tls_alpn(
 /// Закрыть дескриптор TLS и обнулить указатель. Повторный вызов
 /// (в т.ч. с NULL) — безопасный no-op.
 #[no_mangle]
-pub unsafe extern "C" fn nb_tls_close(s: *mut *mut NbTls) {
-    nb_guard((), || {
+pub unsafe extern "C" fn bn_tls_close(s: *mut *mut NbTls) {
+    bn_guard((), || {
         if s.is_null() {
             return;
         }
@@ -558,7 +558,7 @@ pub unsafe extern "C" fn nb_tls_close(s: *mut *mut NbTls) {
 // --- HTTP/1.1 поверх TLS -----------------------------------------------------------
 
 #[no_mangle]
-pub unsafe extern "C" fn nb_http1_fetch(
+pub unsafe extern "C" fn bn_http1_fetch(
     s: *mut NbTls,
     method: *const c_char,
     target: *const c_char,
@@ -568,11 +568,11 @@ pub unsafe extern "C" fn nb_http1_fetch(
     body_len: u32,
     timeout_ms: u32,
 ) -> *mut NbHttpResponse {
-    nb_guard(ptr::null_mut(), || {
+    bn_guard(ptr::null_mut(), || {
         let s = match s.as_ref() {
             Some(s) => s,
             None => {
-                set_last_error_str("nb_http1_fetch: NULL");
+                set_last_error_str("bn_http1_fetch: NULL");
                 return ptr::null_mut();
             }
         };
@@ -635,8 +635,8 @@ pub unsafe extern "C" fn nb_http1_fetch(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nb_http1_response_status(r: *const NbHttpResponse) -> c_int {
-    nb_guard(-(ErrorCode::InvalidArgument as c_int), || {
+pub unsafe extern "C" fn bn_http1_response_status(r: *const NbHttpResponse) -> c_int {
+    bn_guard(-(ErrorCode::InvalidArgument as c_int), || {
         match r.as_ref() {
             Some(r) => {
                 let _rd = rd(&r.ticket);
@@ -648,8 +648,8 @@ pub unsafe extern "C" fn nb_http1_response_status(r: *const NbHttpResponse) -> c
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nb_http1_response_header_count(r: *const NbHttpResponse) -> c_int {
-    nb_guard(-(ErrorCode::InvalidArgument as c_int), || {
+pub unsafe extern "C" fn bn_http1_response_header_count(r: *const NbHttpResponse) -> c_int {
+    bn_guard(-(ErrorCode::InvalidArgument as c_int), || {
         match r.as_ref() {
             Some(r) => {
                 let _rd = rd(&r.ticket);
@@ -665,7 +665,7 @@ pub unsafe extern "C" fn nb_http1_response_header_count(r: *const NbHttpResponse
 /// Буферы малы/NULL → -13; нужные размеры (с NUL) — в *needed_name и
 /// *needed_value (оба записываются при ошибке).
 #[no_mangle]
-pub unsafe extern "C" fn nb_http1_response_header(
+pub unsafe extern "C" fn bn_http1_response_header(
     r: *const NbHttpResponse,
     index: c_int,
     name_buf: *mut c_char,
@@ -675,11 +675,11 @@ pub unsafe extern "C" fn nb_http1_response_header(
     needed_name: *mut u32,
     needed_value: *mut u32,
 ) -> c_int {
-    nb_guard(-(ErrorCode::Panic as c_int), || {
+    bn_guard(-(ErrorCode::Panic as c_int), || {
         let r = match r.as_ref() {
             Some(r) => r,
             None => {
-                set_last_error_str("nb_http1_response_header: NULL");
+                set_last_error_str("bn_http1_response_header: NULL");
                 return -(ErrorCode::InvalidArgument as c_int);
             }
         };
@@ -702,17 +702,17 @@ pub unsafe extern "C" fn nb_http1_response_header(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nb_http1_response_body(
+pub unsafe extern "C" fn bn_http1_response_body(
     r: *const NbHttpResponse,
     out: *mut u8,
     out_cap: u32,
     needed: *mut u32,
 ) -> c_int {
-    nb_guard(-(ErrorCode::Panic as c_int), || {
+    bn_guard(-(ErrorCode::Panic as c_int), || {
         let r = match r.as_ref() {
             Some(r) => r,
             None => {
-                set_last_error_str("nb_http1_response_body: NULL");
+                set_last_error_str("bn_http1_response_body: NULL");
                 return -(ErrorCode::InvalidArgument as c_int);
             }
         };
@@ -726,8 +726,8 @@ pub unsafe extern "C" fn nb_http1_response_body(
 
 /// Освободить ответ и обнулить указатель. Повторный вызов — no-op.
 #[no_mangle]
-pub unsafe extern "C" fn nb_http1_response_free(r: *mut *mut NbHttpResponse) {
-    nb_guard((), || {
+pub unsafe extern "C" fn bn_http1_response_free(r: *mut *mut NbHttpResponse) {
+    bn_guard((), || {
         if r.is_null() {
             return;
         }
@@ -745,13 +745,13 @@ pub unsafe extern "C" fn nb_http1_response_free(r: *mut *mut NbHttpResponse) {
 // --- WSS ------------------------------------------------------------------------
 
 #[no_mangle]
-pub unsafe extern "C" fn nb_ws_connect(
+pub unsafe extern "C" fn bn_ws_connect(
     opts: *const NbConnectOptions,
     path: *const c_char,
     headers: *const NbHeader,
     nheaders: u32,
 ) -> *mut NbWs {
-    nb_guard(ptr::null_mut(), || {
+    bn_guard(ptr::null_mut(), || {
         let parsed = match connect_options_parse(opts) {
             Ok(v) => v,
             Err(e) => {
@@ -816,18 +816,18 @@ pub unsafe extern "C" fn nb_ws_connect(
 
 /// opcode: 1=text, 2=binary, 9=ping.
 #[no_mangle]
-pub unsafe extern "C" fn nb_ws_send(
+pub unsafe extern "C" fn bn_ws_send(
     w: *mut NbWs,
     opcode: u8,
     data: *const u8,
     len: u32,
     timeout_ms: u32,
 ) -> c_int {
-    nb_guard(-(ErrorCode::Panic as c_int), || {
+    bn_guard(-(ErrorCode::Panic as c_int), || {
         let w = match w.as_ref() {
             Some(w) => w,
             None => {
-                set_last_error_str("nb_ws_send: NULL");
+                set_last_error_str("bn_ws_send: NULL");
                 return -(ErrorCode::InvalidArgument as c_int);
             }
         };
@@ -837,7 +837,7 @@ pub unsafe extern "C" fn nb_ws_send(
             2 => Opcode::Binary,
             9 => Opcode::Ping,
             _ => {
-                set_last_error_str("nb_ws_send: opcode должен быть 1, 2 или 9");
+                set_last_error_str("bn_ws_send: opcode должен быть 1, 2 или 9");
                 return -(ErrorCode::InvalidArgument as c_int);
             }
         };
@@ -854,7 +854,7 @@ pub unsafe extern "C" fn nb_ws_send(
 /// нужный размер — в *needed (сообщение при этом НЕ теряется: оно
 /// вернётся при следующем вызове).
 #[no_mangle]
-pub unsafe extern "C" fn nb_ws_recv(
+pub unsafe extern "C" fn bn_ws_recv(
     w: *mut NbWs,
     opcode_out: *mut u8,
     buf: *mut u8,
@@ -862,11 +862,11 @@ pub unsafe extern "C" fn nb_ws_recv(
     timeout_ms: u32,
     needed: *mut u32,
 ) -> c_int {
-    nb_guard(-(ErrorCode::Panic as c_int), || {
+    bn_guard(-(ErrorCode::Panic as c_int), || {
         let w = match w.as_ref() {
             Some(w) => w,
             None => {
-                set_last_error_str("nb_ws_recv: NULL");
+                set_last_error_str("bn_ws_recv: NULL");
                 return -(ErrorCode::InvalidArgument as c_int);
             }
         };
@@ -899,13 +899,13 @@ pub unsafe extern "C" fn nb_ws_recv(
 /// Отправляет close-кадр, закрывает TLS, освобождает дескриптор и
 /// обнуляет указатель. Повторный вызов — no-op.
 #[no_mangle]
-pub unsafe extern "C" fn nb_ws_close(
+pub unsafe extern "C" fn bn_ws_close(
     w: *mut *mut NbWs,
     code: u16,
     reason: *const c_char,
     timeout_ms: u32,
 ) -> c_int {
-    nb_guard(-(ErrorCode::Panic as c_int), || {
+    bn_guard(-(ErrorCode::Panic as c_int), || {
         if w.is_null() {
             return 0;
         }
@@ -933,8 +933,8 @@ pub unsafe extern "C" fn nb_ws_close(
 // --- HTTP/3 ----------------------------------------------------------------------
 
 #[no_mangle]
-pub unsafe extern "C" fn nb_h3_connect(opts: *const NbConnectOptions) -> *mut NbH3 {
-    nb_guard(ptr::null_mut(), || {
+pub unsafe extern "C" fn bn_h3_connect(opts: *const NbConnectOptions) -> *mut NbH3 {
+    bn_guard(ptr::null_mut(), || {
         let parsed = match connect_options_parse(opts) {
             Ok(v) => v,
             Err(e) => {
@@ -966,7 +966,7 @@ pub unsafe extern "C" fn nb_h3_connect(opts: *const NbConnectOptions) -> *mut Nb
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nb_h3_fetch(
+pub unsafe extern "C" fn bn_h3_fetch(
     h: *mut NbH3,
     method: *const c_char,
     target: *const c_char,
@@ -976,11 +976,11 @@ pub unsafe extern "C" fn nb_h3_fetch(
     body_len: u32,
     timeout_ms: u32,
 ) -> *mut NbH3Request {
-    nb_guard(ptr::null_mut(), || {
+    bn_guard(ptr::null_mut(), || {
         let h = match h.as_ref() {
             Some(h) => h,
             None => {
-                set_last_error_str("nb_h3_fetch: NULL");
+                set_last_error_str("bn_h3_fetch: NULL");
                 return ptr::null_mut();
             }
         };
@@ -1027,7 +1027,7 @@ pub unsafe extern "C" fn nb_h3_fetch(
 }
 
 /// Доступ к соединению из дескриптора запроса под read-lock тикета:
-/// Box<NbH3> гарантированно жив на время замыкания (nb_h3_close
+/// Box<NbH3> гарантированно жив на время замыкания (bn_h3_close
 /// освобождает его только под write-lock).
 fn with_conn<T>(
     r: &NbH3Request,
@@ -1038,15 +1038,15 @@ fn with_conn<T>(
     if conn.is_null() {
         return Err(Error::new(
             ErrorCode::Closed,
-            "соединение HTTP/3 уже закрыто (nb_h3_close)",
+            "соединение HTTP/3 уже закрыто (bn_h3_close)",
         ));
     }
     f(unsafe { &*conn })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nb_h3_req_status(r: *const NbH3Request) -> c_int {
-    nb_guard(-(ErrorCode::Panic as c_int), || {
+pub unsafe extern "C" fn bn_h3_req_status(r: *const NbH3Request) -> c_int {
+    bn_guard(-(ErrorCode::Panic as c_int), || {
         let r = match r.as_ref() {
             Some(r) => r,
             None => return -(ErrorCode::InvalidArgument as c_int),
@@ -1065,8 +1065,8 @@ pub unsafe extern "C" fn nb_h3_req_status(r: *const NbH3Request) -> c_int {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nb_h3_req_header_count(r: *const NbH3Request) -> c_int {
-    nb_guard(-(ErrorCode::Panic as c_int), || {
+pub unsafe extern "C" fn bn_h3_req_header_count(r: *const NbH3Request) -> c_int {
+    bn_guard(-(ErrorCode::Panic as c_int), || {
         let r = match r.as_ref() {
             Some(r) => r,
             None => return -(ErrorCode::InvalidArgument as c_int),
@@ -1088,7 +1088,7 @@ pub unsafe extern "C" fn nb_h3_req_header_count(r: *const NbH3Request) -> c_int 
 /// Буферы малы/NULL → -13; нужные размеры (с NUL) — в *needed_name и
 /// *needed_value (оба записываются при ошибке).
 #[no_mangle]
-pub unsafe extern "C" fn nb_h3_req_header(
+pub unsafe extern "C" fn bn_h3_req_header(
     r: *const NbH3Request,
     index: c_int,
     name_buf: *mut c_char,
@@ -1098,11 +1098,11 @@ pub unsafe extern "C" fn nb_h3_req_header(
     needed_name: *mut u32,
     needed_value: *mut u32,
 ) -> c_int {
-    nb_guard(-(ErrorCode::Panic as c_int), || {
+    bn_guard(-(ErrorCode::Panic as c_int), || {
         let r = match r.as_ref() {
             Some(r) => r,
             None => {
-                set_last_error_str("nb_h3_req_header: NULL");
+                set_last_error_str("bn_h3_req_header: NULL");
                 return -(ErrorCode::InvalidArgument as c_int);
             }
         };
@@ -1139,17 +1139,17 @@ pub unsafe extern "C" fn nb_h3_req_header(
 
 /// >=0 прочитано; 0 = тело закончено (fin); <0 ошибка.
 #[no_mangle]
-pub unsafe extern "C" fn nb_h3_req_read(
+pub unsafe extern "C" fn bn_h3_req_read(
     r: *mut NbH3Request,
     buf: *mut u8,
     buf_cap: u32,
     timeout_ms: u32,
 ) -> c_int {
-    nb_guard(-(ErrorCode::Panic as c_int), || {
+    bn_guard(-(ErrorCode::Panic as c_int), || {
         let r = match r.as_ref() {
             Some(r) => r,
             None => {
-                set_last_error_str("nb_h3_req_read: NULL");
+                set_last_error_str("bn_h3_req_read: NULL");
                 return -(ErrorCode::InvalidArgument as c_int);
             }
         };
@@ -1175,10 +1175,10 @@ pub unsafe extern "C" fn nb_h3_req_read(
 }
 
 /// Освободить дескриптор запроса и обнулить указатель. Безопасен и
-/// после nb_h3_close (осиротевший запрос), и повторно.
+/// после bn_h3_close (осиротевший запрос), и повторно.
 #[no_mangle]
-pub unsafe extern "C" fn nb_h3_req_free(r: *mut *mut NbH3Request) {
-    nb_guard((), || {
+pub unsafe extern "C" fn bn_h3_req_free(r: *mut *mut NbH3Request) {
+    bn_guard((), || {
         if r.is_null() {
             return;
         }
@@ -1200,17 +1200,17 @@ pub unsafe extern "C" fn nb_h3_req_free(r: *mut *mut NbH3Request) {
 
 /// Токен resumption (0-RTT): >0 длина; 0 нет; мал буфер → -13 + *needed.
 #[no_mangle]
-pub unsafe extern "C" fn nb_h3_take_resumption_token(
+pub unsafe extern "C" fn bn_h3_take_resumption_token(
     h: *mut NbH3,
     out: *mut u8,
     out_cap: u32,
     needed: *mut u32,
 ) -> c_int {
-    nb_guard(-(ErrorCode::Panic as c_int), || {
+    bn_guard(-(ErrorCode::Panic as c_int), || {
         let h = match h.as_ref() {
             Some(h) => h,
             None => {
-                set_last_error_str("nb_h3_take_resumption_token: NULL");
+                set_last_error_str("bn_h3_take_resumption_token: NULL");
                 return -(ErrorCode::InvalidArgument as c_int);
             }
         };
@@ -1228,8 +1228,8 @@ pub unsafe extern "C" fn nb_h3_take_resumption_token(
 /// Закрыть соединение HTTP/3, осиротить его запросы (их дескрипторы
 /// далее возвращают -9), освободить Box и обнулить указатель.
 #[no_mangle]
-pub unsafe extern "C" fn nb_h3_close(h: *mut *mut NbH3) {
-    nb_guard((), || {
+pub unsafe extern "C" fn bn_h3_close(h: *mut *mut NbH3) {
+    bn_guard((), || {
         if h.is_null() {
             return;
         }
@@ -1240,7 +1240,7 @@ pub unsafe extern "C" fn nb_h3_close(h: *mut *mut NbH3) {
         let href = &*p;
         let _wr = wr(&href.ticket); // ждём все операции по соединению
         {
-            // Осиротить запросы: conn = NULL → nb_h3_req_* вернут Closed.
+            // Осиротить запросы: conn = NULL → bn_h3_req_* вернут Closed.
             let mut reqs = lock(&href.requests);
             for r in reqs.iter() {
                 (**r).conn.store(ptr::null_mut(), Ordering::Release);
@@ -1278,11 +1278,11 @@ thread_local! {
     static VERSION_BUF: RefCell<[u8; 128]> = const { RefCell::new([0; 128]) };
 }
 
-/// Записать сообщение последней ошибки (для nb_last_error_message).
+/// Записать сообщение последней ошибки (для bn_last_error_message).
 /// Чтение НЕ разрушающее: слот очищается только следующей операцией
-/// nb_* (см. nb_guard), поэтому code и message можно читать в любом
+/// bn_* (см. bn_guard), поэтому code и message можно читать в любом
 /// порядке и сколько угодно раз.
-pub fn nb_last_error_message_impl() -> *const c_char {
+pub fn bn_last_error_message_impl() -> *const c_char {
     let msg = crate::error::last_error_message();
     MSG.with(|m| {
         let mut b = m.borrow_mut();

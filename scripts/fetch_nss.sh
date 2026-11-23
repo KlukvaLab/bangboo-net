@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Скачать и собрать пиннованный NSS (+NSPR) для neqo-backend.
+# Скачать и собрать пиннованный NSS (+NSPR) для bangboo-net.
 #
 # Результат:
 #   $NSS_DEPS/nss-3.134/nss       -> NSS_DIR
@@ -9,7 +9,7 @@
 #              clang+libclang (для bindgen на этапе cargo).
 set -euo pipefail
 
-NSS_DEPS="${NSS_DEPS:-$HOME/neqo-backend-deps}"
+NSS_DEPS="${NSS_DEPS:-$HOME/bangboo-net-deps}"
 NSS_VERSION="3.134"
 NSPR_VERSION="4.41"
 TARBALL="nss-${NSS_VERSION}-with-nspr-${NSPR_VERSION}.tar.gz"

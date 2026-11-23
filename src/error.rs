@@ -15,7 +15,7 @@ use std::{cell::RefCell, fmt};
 #[repr(i32)]
 pub enum ErrorCode {
     Ok = 0,
-    /// Внутренняя ошибка (см. nb_last_error_message)
+    /// Внутренняя ошибка (см. bn_last_error_message)
     Generic = 1,
     InvalidArgument = 2,
     NotInitialized = 3,
@@ -47,7 +47,7 @@ pub enum ErrorCode {
     /// (catch_unwind): стек C++/ART не повреждён, дескриптор
     /// остаётся валидным, но его состояние могло быть нарушено.
     Panic = 14,
-    /// Сообщение/тело превысило лимит размера (nb_set_limits).
+    /// Сообщение/тело превысило лимит размера (bn_set_limits).
     MessageTooLarge = 15,
 }
 
@@ -112,7 +112,7 @@ impl Error {
         Self::new(ErrorCode::Timeout, msg)
     }
 
-    /// Превышен лимит размера сообщения (nb_set_limits).
+    /// Превышен лимит размера сообщения (bn_set_limits).
     pub fn too_large(msg: impl Into<String>) -> Self {
         Self::new(ErrorCode::MessageTooLarge, msg)
     }
@@ -190,8 +190,8 @@ thread_local! {
     static LAST_ERROR: RefCell<ErrSlot> = const { RefCell::new(ErrSlot::EMPTY) };
 }
 
-/// Записать код и сообщение последней ошибки (для nb_last_error_code /
-/// nb_last_error_message).
+/// Записать код и сообщение последней ошибки (для bn_last_error_code /
+/// bn_last_error_message).
 pub fn set_last_error(err: &Error) {
     LAST_ERROR.with(|slot| slot.borrow_mut().set(err.code as i32, &format!("{err}")));
 }
@@ -211,20 +211,20 @@ pub fn set_panic_error(msg: &str) {
 }
 
 /// Очистить слот последней ошибки. Вызывается на входе КАЖДОЙ операции
-/// nb_* (в nb_guard): слот всегда отражает только последний вызов в
+/// bn_* (в bn_guard): слот всегда отражает только последний вызов в
 /// потоке — «свежесть» ошибки для многопоточных/JNA-сценариев.
 pub fn clear_last_error() {
     LAST_ERROR.with(|slot| *slot.borrow_mut() = ErrSlot::EMPTY);
 }
 
 /// Последнее сообщение об ошибке в этом потоке (не разрушающее чтение;
-/// очищается при следующем вызове nb_*).
+/// очищается при следующем вызове bn_*).
 pub fn last_error_message() -> String {
     LAST_ERROR.with(|slot| slot.borrow().message().to_string())
 }
 
 /// Код последней ошибки в этом потоке (без очистки; 0 = ошибки не было).
-/// Слот очищается при следующем вызове nb_* (свежесть ошибки).
+/// Слот очищается при следующем вызове bn_* (свежесть ошибки).
 pub fn last_error_code() -> i32 {
     LAST_ERROR.with(|slot| slot.borrow().code)
 }

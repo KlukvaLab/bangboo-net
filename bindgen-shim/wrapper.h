@@ -1,4 +1,4 @@
-/* Shim-заголовок для bindgen: только то, что нужно neqo-backend. */
+/* Shim-заголовок для bindgen: только то, что нужно bangboo-net. */
 #include "prio.h"
 #include "prnetdb.h"
 #include "prerror.h"

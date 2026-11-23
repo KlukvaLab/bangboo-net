@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Сборка neqo-backend для Android (arm64-v8a / armeabi-v7a).
+# Сборка bangboo-net для Android (arm64-v8a / armeabi-v7a).
 #
 # Требуется: Android NDK r26+ (переменная ANDROID_NDK_HOME или ~/Android/Sdk/ndk/*).
 # Скрипт:
@@ -7,12 +7,12 @@
 #   2) собирает cdylib через cargo с --target ...-android;
 #   3) кладёт результат в dist/android-<abi>/ (для jniLibs).
 #
-# Выход: libneqo_backend.so (+ NSS .so рядом; грузите их все в jniLibs/<abi>).
+# Выход: libbangboo_net.so (+ NSS .so рядом; грузите их все в jniLibs/<abi>).
 set -euo pipefail
 
 ABI="${1:-arm64}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-NSS_DEPS="${NSS_DEPS:-$HOME/neqo-backend-deps}"
+NSS_DEPS="${NSS_DEPS:-$HOME/bangboo-net-deps}"
 API=24
 
 # --- NDK ---
@@ -98,14 +98,14 @@ cargo build --release --target "$RUST_TARGET"
 
 OUT="$HERE/dist/android-$ABI"
 mkdir -p "$OUT"
-cp "target/$RUST_TARGET/release/libneqo_backend.so" "$OUT/"
+cp "target/$RUST_TARGET/release/libbangboo_net.so" "$OUT/"
 for lib in libnss3.so libnssutil3.so libssl3.so libnspr4.so \
             libplc4.so libplds4.so libfreebl3.so libfreeblpriv3.so \
             libsoftokn3.so libsqlite3.so; do
     [ -f "$NSS_SRC/dist_android_$ABI/lib/$lib" ] && \
         cp -L "$NSS_SRC/dist_android_$ABI/lib/$lib" "$OUT/"
 done
-cp "$HERE/ffi/neqo_backend.h" "$OUT/"
+cp "$HERE/ffi/bangboo_net.h" "$OUT/"
 
 echo ">> Готово: $OUT (скопируйте .so в app/src/main/jniLibs/$ABI/)"
 ls -la "$OUT"

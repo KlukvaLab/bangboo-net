@@ -1,4 +1,4 @@
-//! build.rs для neqo-backend.
+//! build.rs для bangboo-net.
 //!
 //! Задачи:
 //!  1. Найти заголовки NSS/NSPR тем же способом, что и nss-rs:
@@ -100,7 +100,7 @@ fn main() {
         .allowlist_function("PR_GetAddrInfoByName")
         .allowlist_function("PR_EnumerateAddrInfo")
         .allowlist_function("PR_FreeAddrInfo")
-        // --- NSS: init/shutdown (nb_init/nb_shutdown, владение NSS) -------
+        // --- NSS: init/shutdown (bn_init/bn_shutdown, владение NSS) -------
         .allowlist_function("NSS_Shutdown")
         .allowlist_function("NSS_NoDB_Init")
         .allowlist_function("NSS_IsInitialized")

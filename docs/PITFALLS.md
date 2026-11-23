@@ -156,13 +156,13 @@ Firefox предлагает zlib/brotli/zstd в `compress_certificate`. Есл�
 
 ## 16. Threading
 
-* NSS init — глобальный; вызывать можно много раз (после `nb_shutdown`
+* NSS init — глобальный; вызывать можно много раз (после `bn_shutdown`
   библиотека поднимает NSS сама — OnceLock внутри nss-rs этого не
   умеет, см. init.rs::ensure_nss).
 * Дескрипторы потокобезопасны: состояние под Mutex, вызовы из разных
   потоков сериализуются; close синхронизирован с операциями через
   билет (RwLock). Детали — docs/SECURITY.md.
-* `nb_last_error_message()` — thread-local (слот Copy, без
+* `bn_last_error_message()` — thread-local (слот Copy, без
   TLS-деструктора — безопасно для dlclose).
 
 ## 17. Rust-2024-крейты и старые таргеты
