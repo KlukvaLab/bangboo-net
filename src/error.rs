@@ -80,7 +80,7 @@ pub struct Error {
     pub code: ErrorCode,
     pub message: String,
     /// Исходный код ошибки NSPR/SSL (0 — не NSPR-ошибка).
-    /// Используется внутренней retry-логикой (TLS version-intolerance),
+    /// Используется внутренней логикой повторной попытки (TLS version-intolerance),
     /// наружу через C ABI не экспортируется.
     pub pr_code: i32,
 }

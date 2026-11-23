@@ -87,7 +87,7 @@ Kotlin/JNA: [docs/USAGE.md](docs/USAGE.md).
 
 ## Сборка
 
-Требуется pinned-набор (скрипты делают всё сами):
+Требуется закреплённый набор версий (скрипты делают всё сами):
 
 ```bash
 scripts/fetch_nss.sh          # NSS 3.134 + NSPR 4.41, проверка sha256
@@ -100,7 +100,7 @@ scripts/build_android.sh arm64 # и/или: arm32
 
 ## Документация
 
-* [docs/BUILDING.md](docs/BUILDING.md) — сборка, таргеты, пиннинг
+* [docs/BUILDING.md](docs/BUILDING.md) — сборка, целевые платформы, закрепление версий
 * [docs/PROFILE.md](docs/PROFILE.md) — TLS-профиль Firefox: параметры и источники
 * [docs/PITFALLS.md](docs/PITFALLS.md) — ловушки NSS/neqo (обязательно к прочтению)
 * [docs/USAGE.md](docs/USAGE.md) — C ABI, Kotlin/JNA, сценарии
@@ -112,9 +112,9 @@ scripts/build_android.sh arm64 # и/или: arm32
 * TLS 1.2/1.3 (профили desktop/android), HTTP/1.1 (keep-alive:
   несколько запросов по одному соединению), HTTP/3, WSS — готово.
 * Поведение подключения — как у Firefox: false start, TLS-resumption
-  (клиентский кеш NSS, в рамках процесса), Happy Eyeballs для TCP
-  (RFC 8305, стаггер 300 мс), повтор при version-intolerance с
-  downgrade-check.
+  (клиентский кеш NSS, в рамках процесса), Happy Eyeballs для TCP,
+  повтор при version-intolerance с downgrade-check. Для QUIC-пути
+  берётся первый адрес DNS.
 * Устойчивый C ABI: паники перехвачены (catch_unwind, -14), дескрипторы
   потокобезопасны, close/free обнуляют указатель, лимиты размеров
   (`bn_set_limits`, -15), `bn_shutdown` чистит NSS для dlclose —
@@ -126,7 +126,7 @@ scripts/build_android.sh arm64 # и/или: arm32
 
 ## Проверено (Linux x86_64, машина сборки)
 
-Е2Е-тест `tests/smoke.c` (компилируется с `ffi/bangboo_net.h`, линкуется
+Сквозной тест `tests/smoke.c` (компилируется с `ffi/bangboo_net.h`, линкуется
 с собранной `libbangboo_net.so`):
 
 | Проверка | Результат |
@@ -134,9 +134,9 @@ scripts/build_android.sh arm64 # и/или: arm32
 | `cargo test` | 2 passed (SHA-1 векторы, RFC 6455 accept) |
 | TLS + HTTP/1.1 GET example.com | **200**, тело прочитано (в т.ч. chunked) |
 | HTTP/3 GET example.com (QUIC handshake + верификация цепочки) | **200**, 321 байт |
-| HTTP/3 с resumption-токеном (`tests/h3_resume.c`) | два соединения подряд, **200/200** |
+| HTTP/3 с токеном возобновления (`tests/h3_resume.c`) | два соединения подряд, **200/200** |
 | TLS-resumption (`tests/resume.rs`: два соединения, один адрес) | второе возобновлено (кеш NSS) |
-| WSS (text/binary/ping/close, echo) | **эхо text+binary**, close-кадр 1000 |
+| WSS (text/binary/ping/close, echo) | **эхо text+binary**, кадр close с кодом 1000 |
 | ECH (конфиг из DoH, crypto.cloudflare.com) | handshake с ECH — успешен |
-| Устойчивость ABI (`tests/misuse.c`: NULL-аргументы, двойной close, too-small буферы, use-after-close, лимиты, shutdown/re-init) | **OK** (-2/-13/-9/-15/-3 как задумано) |
-| Рантайм без LD_LIBRARY_PATH | rpath=$ORIGIN на всех .so, NSS 3.134 из бандла |
+| Устойчивость ABI (`tests/misuse.c`: NULL-аргументы, двойной close, малые буферы, use-after-close, лимиты, shutdown/re-init) | **OK** (-2/-13/-9/-15/-3 как задумано) |
+| Запуск без LD_LIBRARY_PATH | rpath=$ORIGIN на всех .so, NSS 3.134 в комплекте |

@@ -1,7 +1,7 @@
 //! TLS-соединения на NSPR/NSS сокетах.
 //!
 //! Жизненный цикл (то же, что у nsSSLIOLayer в Firefox):
-//!  1. резолв всех адресов + Happy Eyeballs (RFC 8305, стаггер 300 мс
+//!  1. резолв всех адресов + Happy Eyeballs (RFC 8305, задержка старта 300 мс
 //!     — как network.http.fast-fallback-to-IPv4);
 //!  2. на каждого кандидата: `PR_NewTCPSocket` → `SSL_ImportFD` →
 //!     профиль Firefox (`profile::configure_socket`);

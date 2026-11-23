@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Скачать и собрать пиннованный NSS (+NSPR) для bangboo-net.
+# Скачать и собрать закреплённый NSS (+NSPR) для bangboo-net.
 #
 # Результат:
 #   $NSS_DEPS/nss-3.134/nss       -> NSS_DIR

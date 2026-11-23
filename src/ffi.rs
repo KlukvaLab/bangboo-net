@@ -466,7 +466,7 @@ pub unsafe extern "C" fn bn_tls_read(
         };
         let _rd = rd(&s.ticket);
         if len == 0 {
-            return 0; // nothing to read — не трогаем NULL-буфер
+            return 0; // читать нечего — не трогаем NULL-буфер
         }
         if buf.is_null() {
             return -(ErrorCode::InvalidArgument as c_int);

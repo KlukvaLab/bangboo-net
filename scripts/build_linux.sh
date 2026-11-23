@@ -9,7 +9,7 @@ set -euo pipefail
 ARCH="${1:-x86_64}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 export NSS_DEPS="${NSS_DEPS:-$HOME/bangboo-net-deps}"
-# Версия NSS (пиннинг — scripts/fetch_nss.sh). Каталог nss/ внутри
+# Версия NSS (закрепление — scripts/fetch_nss.sh). Каталог nss/ внутри
 # может быть удалён после сборки NSS (NSS_PREBUILT=1): наш build.rs и
 # nss-rs читают только $NSS_DIR/../dist; для assert is_dir() в nss-rs
 # каталог-заглушка создаётся ниже.

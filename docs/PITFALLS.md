@@ -9,15 +9,16 @@
 данные ОТКРЫТЫМ ТЕКСТОМ (или сервер рвёт соединение), а `SSL_PeerCertificate`
 возвращает NULL.
 
-**Причина:** в стеке NSPR/NSS SSL — это слой НАД сокетом (`SSL_ImportFD`).
-`PR_Connect` завершает только TCP-часть. Handshake запускается лениво:
+**Причина:** в стеке NSPR/NSS SSL — это уровень НАД сокетом (`SSL_ImportFD`).
+`PR_Connect` завершает только установку TCP-соединения. Handshake TLS
+запускается лениво:
 при первом read/write ИЛИ явно через `SSL_ForceHandshake`.
 
 **Решение (реализовано в `tls.rs`):**
 
 ```c
 fd = PR_NewTCPSocket();
-ssl = SSL_ImportFD(NULL, fd);      /* надеваем SSL-слой          */
+ssl = SSL_ImportFD(NULL, fd);      /* включаем SSL поверх сокета */
 /* ... конфигурация ДО handshake ... */
 PR_Connect(ssl, &addr, timeout);   /* TCP                        */
 SSL_ResetHandshake(ssl, PR_FALSE); /* клиент                     */
@@ -33,13 +34,13 @@ Firefox вызывает `SSL_ForceHandshake` из nsSSLIOLayer (PSM) до то�
 
 `nss-rs 0.16.3` требует NSS **>= 3.130** и при сборке через pkg-config
 явно падает («requirement >=3.130, found 3.98»). Но если связать
-библиотеку со СТАРЫМ системным NSS в рантайме (rpath не указан,
+библиотеку со СТАРЫМ системным NSS во время исполнения (rpath не указан,
 ldd показывает /lib/x86_64-linux-gnu/libnss3.so) — версия проверится
 в `nss::init()` и упадёт, но хуже, если кто-то «починит» проверку:
-cipher-список и порядок расширений молча разойдутся с ожидаемыми.
+список шифров и порядок расширений молча разойдутся с ожидаемыми.
 
-**Правило:** всегда бегаем с NSS из пиннованного тарбола
-(`scripts/fetch_nss.sh`), .so-шки кладём рядом с библиотекой,
+**Правило:** всегда бегаем с NSS из закреплённого тарбола
+(`scripts/fetch_nss.sh`), файлы .so кладём рядом с библиотекой,
 rpath=`$ORIGIN` (делает `scripts/build_linux.sh`).
 
 ## 3. Дубликат крейта nss-rs = несовместимые типы
@@ -69,8 +70,9 @@ bindgen их не видит. В `profile.rs`/`tls.rs` они резолвятс
 
 Firefox полагается на порядок шифров, ЗАШИТЫЙ В КОМПИЛЯЦИЮ NSS
 (ssl3con.c). `SSL_CipherSuiteOrderGet/Set` существует, но Firefox его
-не использует (кроме ARM-свинга ChaCha20). Следствие: **порядок в
-ClientHello задаётся версией NSS** — ещё одна причина пиннинга.
+не использует (кроме ARM-сборок, где ChaCha20 поднимают выше).
+Следствие: **порядок в
+ClientHello задаётся версией NSS** — ещё одна причина закрепления.
 Наш список в `set_ciphers()` — только ВКЛ/ВЫКЛ, как у Firefox.
 
 ## 6. nss-rs не экспортирует SSL-биндинги
@@ -80,7 +82,8 @@ ClientHello задаётся версией NSS** — ещё одна причи
 TLS-сокетов (PR_Connect/PR_Read/PR_Poll + SSL_* функции), мы генерируем
 своим bindgen'ом в `build.rs` (шим `bindgen-shim/wrapper.h`).
 
-**Ловушка:** bindgen-имена констант зависят от constified-режима:
+**Ловушка:** имена констант, которые даёт bindgen, зависят от режима
+constified enum:
 `_SECStatus_SECSuccess`, `PRStatus_PR_SUCCESS`,
 `SSLNamedGroup_ssl_grp_ec_curve25519`,
 `SSLSignatureScheme_ssl_sig_rsa_pss_rsae_sha256` (!не `rsa_pss_sha256`

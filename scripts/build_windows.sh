@@ -13,7 +13,7 @@ set -euo pipefail
 ARCH="${1:-x64}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 export NSS_DEPS="${NSS_DEPS:-$HOME/bangboo-net-deps}"
-# Версия NSS (пиннинг — scripts/fetch_nss.sh). Windows-dist NSS нужно
+# Версия NSS (закрепление — scripts/fetch_nss.sh). Windows-dist NSS нужно
 # собрать отдельно (см. docs/BUILDING.md).
 export NSS_VER="${NSS_VER:-3.134}"
 # nss-rs (и наш build.rs) ищут NSS в $NSS_DIR/../dist; экспортировать
