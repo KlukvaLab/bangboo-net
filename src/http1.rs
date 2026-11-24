@@ -169,7 +169,7 @@ pub fn send_request_and_read_head(
 }
 
 /// Дочитать тело ответа (по Content-Length, chunked или до EOF).
-/// Размер ограничен `nb_set_limits` (по умолчанию 64 МиБ): сервер,
+/// Размер ограничен `bn_set_limits` (по умолчанию 64 МиБ): сервер,
 /// объявляющий сколь угодно большое тело, не может занять всю память
 /// процесса — превышение даёт ошибку MessageTooLarge.
 pub fn read_body(stream: &mut TlsStream, resp: &mut Response, timeout: Duration) -> Result<()> {
@@ -225,7 +225,7 @@ pub fn read_body(stream: &mut TlsStream, resp: &mut Response, timeout: Duration)
             // Лимит: сам chunk и накопленное тело.
             if out.len() + size > max {
                 return Err(Error::too_large(format!(
-                    "chunked-тело превышает лимит {max} байт (nb_set_limits)"
+                    "chunked-тело превышает лимит {max} байт (bn_set_limits)"
                 )));
             }
             // Дочитываем data + CRLF.
@@ -246,7 +246,7 @@ pub fn read_body(stream: &mut TlsStream, resp: &mut Response, timeout: Duration)
             .map_err(|_| Error::new(ErrorCode::ProtocolError, "плохой Content-Length"))?;
         if want > max {
             return Err(Error::too_large(format!(
-                "Content-Length {want} превышает лимит {max} байт (nb_set_limits)"
+                "Content-Length {want} превышает лимит {max} байт (bn_set_limits)"
             )));
         }
         while resp.body.len() < want {
@@ -261,7 +261,7 @@ pub fn read_body(stream: &mut TlsStream, resp: &mut Response, timeout: Duration)
     loop {
         if resp.body.len() >= max {
             return Err(Error::too_large(format!(
-                "тело ответа (без Content-Length) превышает лимит {max} байт (nb_set_limits)"
+                "тело ответа (без Content-Length) превышает лимит {max} байт (bn_set_limits)"
             )));
         }
         let room = (max - resp.body.len()).min(16 * 1024);

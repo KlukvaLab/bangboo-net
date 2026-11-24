@@ -69,7 +69,7 @@ impl WsStream {
     ) -> Result<WsStream> {
         // ALPN для WSS: как Firefox, предлагаем [h2, http/1.1]; WebSocket
         // в v1 идёт через http/1.1. Если вызывающий задал свой список в
-        // NbConnectOptions.alpn — используем его (например "http/1.1",
+        // BnConnectOptions.alpn — используем его (например "http/1.1",
         // чтобы гарантировать WSS на h2-серверах).
         let default_alpn: [&str; 2] = ["h2", "http/1.1"];
         let user_alpn: Vec<&str> = params.alpn.map(|s| s.to_vec()).unwrap_or_default();
@@ -157,12 +157,12 @@ impl WsStream {
     }
 
     /// Отправить один кадр (маскируется автоматически). Размер payload
-    /// ограничен лимитом сообщений `nb_set_limits` (симметрично приёму).
+    /// ограничен лимитом сообщений `bn_set_limits` (симметрично приёму).
     pub fn send(&mut self, opcode: Opcode, payload: &[u8], timeout: Duration) -> Result<()> {
         let max = crate::limits::ws_message();
         if payload.len() > max {
             return Err(Error::too_large(format!(
-                "WS-сообщение превышает лимит {max} байт (nb_set_limits)"
+                "WS-сообщение превышает лимит {max} байт (bn_set_limits)"
             )));
         }
         let deadline = Instant::now() + timeout;
@@ -189,7 +189,7 @@ impl WsStream {
     /// Прочитать следующее СООБЩЕНИЕ (фрагменты собираются; ping
     /// отрабатывается авто-pong; close возвращает Opcode::Close с
     /// payload = код + причина). Размер кадра и собранного сообщения
-    /// ограничены `nb_set_limits` — сервер не может занять память
+    /// ограничены `bn_set_limits` — сервер не может занять память
     /// процесса бесконечной фрагментацией.
     pub fn recv(&mut self, timeout: Duration) -> Result<WsMessage> {
         if let Some(msg) = self.pending.take() {
@@ -212,7 +212,7 @@ impl WsStream {
             }
             if len > max as u64 {
                 return Err(Error::too_large(format!(
-                    "кадр WS превышает лимит {max} байт (nb_set_limits)"
+                    "кадр WS превышает лимит {max} байт (bn_set_limits)"
                 )));
             }
             let mask = if masked {
@@ -252,7 +252,7 @@ impl WsStream {
                         self.fragment_buf.clear();
                         return Err(Error::too_large(format!(
                             "фрагментированное WS-сообщение превышает лимит {max} байт \
-                             (nb_set_limits)"
+                             (bn_set_limits)"
                         )));
                     }
                     self.fragment_buf.extend_from_slice(&payload);

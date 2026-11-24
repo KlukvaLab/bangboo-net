@@ -4,16 +4,16 @@
  *  - NULL-аргументы во всех функциях → -2, не segfault;
  *  - too-small буферы → -13 + needed;
  *  - use-after-close запроса H3 → -9 (не UAF);
- *  - лимиты nb_set_limits → -15 MessageTooLarge;
- *  - nb_shutdown при закрытых дескрипторах → 0, повторный nb_init работает.
+ *  - лимиты bn_set_limits → -15 MessageTooLarge;
+ *  - bn_shutdown при закрытых дескрипторах → 0, повторный bn_init работает.
  *
- * Сборка: gcc tests/misuse.c -I ffi -o misuse -L target/release -lneqo_backend
+ * Сборка: gcc tests/misuse.c -I ffi -o misuse -L target/release -lbangboo_net
  * Запуск: LD_LIBRARY_PATH=... ./misuse [host]
  */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include "neqo_backend.h"
+#include "bangboo_net.h"
 
 static int failures = 0;
 
@@ -29,126 +29,126 @@ static int failures = 0;
 int main(int argc, char **argv) {
     const char *host = argc > 1 ? argv[1] : "example.com";
 
-    CHECK(nb_init(NULL, 0) == 0, "nb_init");
+    CHECK(bn_init(NULL, 0) == 0, "bn_init");
 
     /* --- NULL-аргументы ------------------------------------------------ */
-    CHECK(nb_tls_read(NULL, NULL, 0, 1) == -2, "tls_read(NULL)");
-    CHECK(nb_tls_write(NULL, NULL, 0, 1) == -2, "tls_write(NULL)");
-    CHECK(nb_tls_alpn(NULL, NULL, 0, NULL) == -2, "tls_alpn(NULL)");
-    CHECK(nb_http1_fetch(NULL, "GET", "/", NULL, 0, NULL, 0, 1) == NULL, "http1_fetch(NULL)");
-    CHECK(nb_http1_response_status(NULL) == -2, "resp_status(NULL)");
-    CHECK(nb_http1_response_header_count(NULL) == -2, "resp_hc(NULL)");
-    CHECK(nb_http1_response_header(NULL, 0, NULL, 0, NULL, 0, NULL, NULL) == -2, "resp_h(NULL)");
-    CHECK(nb_http1_response_body(NULL, NULL, 0, NULL) == -2, "resp_body(NULL)");
-    CHECK(nb_ws_connect(NULL, "/", NULL, 0) == NULL, "ws_connect(NULL)");
-    CHECK(nb_ws_send(NULL, 1, NULL, 0, 1) == -2, "ws_send(NULL)");
-    CHECK(nb_ws_recv(NULL, NULL, NULL, 0, 1, NULL) == -2, "ws_recv(NULL)");
-    CHECK(nb_h3_connect(NULL) == NULL, "h3_connect(NULL)");
-    CHECK(nb_h3_fetch(NULL, "GET", "/", NULL, 0, NULL, 0, 1) == NULL, "h3_fetch(NULL)");
-    CHECK(nb_h3_req_status(NULL) == -2, "req_status(NULL)");
-    CHECK(nb_h3_req_header_count(NULL) == -2, "req_hc(NULL)");
-    CHECK(nb_h3_req_header(NULL, 0, NULL, 0, NULL, 0, NULL, NULL) == -2, "req_h(NULL)");
-    CHECK(nb_h3_req_read(NULL, NULL, 0, 1) == -2, "req_read(NULL)");
-    CHECK(nb_h3_take_resumption_token(NULL, NULL, 0, NULL) == -2, "take_tok(NULL)");
+    CHECK(bn_tls_read(NULL, NULL, 0, 1) == -2, "tls_read(NULL)");
+    CHECK(bn_tls_write(NULL, NULL, 0, 1) == -2, "tls_write(NULL)");
+    CHECK(bn_tls_alpn(NULL, NULL, 0, NULL) == -2, "tls_alpn(NULL)");
+    CHECK(bn_http1_fetch(NULL, "GET", "/", NULL, 0, NULL, 0, 1) == NULL, "http1_fetch(NULL)");
+    CHECK(bn_http1_response_status(NULL) == -2, "resp_status(NULL)");
+    CHECK(bn_http1_response_header_count(NULL) == -2, "resp_hc(NULL)");
+    CHECK(bn_http1_response_header(NULL, 0, NULL, 0, NULL, 0, NULL, NULL) == -2, "resp_h(NULL)");
+    CHECK(bn_http1_response_body(NULL, NULL, 0, NULL) == -2, "resp_body(NULL)");
+    CHECK(bn_ws_connect(NULL, "/", NULL, 0) == NULL, "ws_connect(NULL)");
+    CHECK(bn_ws_send(NULL, 1, NULL, 0, 1) == -2, "ws_send(NULL)");
+    CHECK(bn_ws_recv(NULL, NULL, NULL, 0, 1, NULL) == -2, "ws_recv(NULL)");
+    CHECK(bn_h3_connect(NULL) == NULL, "h3_connect(NULL)");
+    CHECK(bn_h3_fetch(NULL, "GET", "/", NULL, 0, NULL, 0, 1) == NULL, "h3_fetch(NULL)");
+    CHECK(bn_h3_req_status(NULL) == -2, "req_status(NULL)");
+    CHECK(bn_h3_req_header_count(NULL) == -2, "req_hc(NULL)");
+    CHECK(bn_h3_req_header(NULL, 0, NULL, 0, NULL, 0, NULL, NULL) == -2, "req_h(NULL)");
+    CHECK(bn_h3_req_read(NULL, NULL, 0, 1) == -2, "req_read(NULL)");
+    CHECK(bn_h3_take_resumption_token(NULL, NULL, 0, NULL) == -2, "take_tok(NULL)");
 
     /* close/free с NULL и NULL-слотами — no-op */
-    nb_tls_close(NULL);
-    NbTls *nt = NULL; nb_tls_close(&nt);
-    NbWs *nw = NULL; CHECK(nb_ws_close(&nw, 1000, NULL, 100) == 0, "ws_close(NULL slot)");
-    NbH3 *nh = NULL; nb_h3_close(&nh);
-    NbH3Request *nr = NULL; nb_h3_req_free(&nr);
-    NbHttpResponse *nresp = NULL; nb_http1_response_free(&nresp);
+    bn_tls_close(NULL);
+    BnTls *nt = NULL; bn_tls_close(&nt);
+    BnWs *nw = NULL; CHECK(bn_ws_close(&nw, 1000, NULL, 100) == 0, "ws_close(NULL slot)");
+    BnH3 *nh = NULL; bn_h3_close(&nh);
+    BnH3Request *nr = NULL; bn_h3_req_free(&nr);
+    BnHttpResponse *nresp = NULL; bn_http1_response_free(&nresp);
     printf("NULL-args OK\n");
 
     /* --- реальное соединение + лимиты ---------------------------------- */
     /* 16 байт: любая непустая страница не влезет → MessageTooLarge */
-    nb_set_limits(16, 16, 16);
+    bn_set_limits(16, 16, 16);
 
-    NbConnectOptions o;
+    BnConnectOptions o;
     memset(&o, 0, sizeof o);
     o.host = host;
     o.port = 443;
     o.timeout_ms = 15000;
     o.profile = 0;
 
-    NbTls *tls = nb_tls_connect(&o);
+    BnTls *tls = bn_tls_connect(&o);
     if (!tls) {
-        printf("nb_tls_connect FAILED (сеть?): %s\n", nb_last_error_message());
-        nb_set_limits(0, 0, 0);
+        printf("bn_tls_connect FAILED (сеть?): %s\n", bn_last_error_message());
+        bn_set_limits(0, 0, 0);
         return 1;
     }
 
-    NbHttpResponse *resp = nb_http1_fetch(tls, "GET", "/", NULL, 0, NULL, 0, 15000);
+    BnHttpResponse *resp = bn_http1_fetch(tls, "GET", "/", NULL, 0, NULL, 0, 15000);
     CHECK(resp == NULL, "fetch под лимитом 16 байт → NULL");
-    CHECK(nb_last_error_code() == 15,
-          "код 15 MessageTooLarge, получен %d", nb_last_error_code());
-    printf("limits: %s\n", nb_last_error_message());
+    CHECK(bn_last_error_code() == 15,
+          "код 15 MessageTooLarge, получен %d", bn_last_error_code());
+    printf("limits: %s\n", bn_last_error_message());
 
-    nb_tls_close(&tls);
+    bn_tls_close(&tls);
     CHECK(tls == NULL, "tls_close nullified");
-    nb_tls_close(&tls); /* двойной close — no-op */
-    nb_tls_close(&tls);
+    bn_tls_close(&tls); /* двойной close — no-op */
+    bn_tls_close(&tls);
 
     /* after-close операции по обнулённому указателю детектируются как
      * NULL (-2), а не UAF. */
-    CHECK(nb_tls_read(tls, NULL, 0, 1) == -2, "read after close==NULL → -2");
+    CHECK(bn_tls_read(tls, NULL, 0, 1) == -2, "read after close==NULL → -2");
 
     /* --- дефолты контракта: port=0 => 443, timeout_ms=0 => 30000 ------- */
-    nb_set_limits(0, 0, 0); /* вернуть безлимит */
+    bn_set_limits(0, 0, 0); /* вернуть безлимит */
     {
-        NbConnectOptions od = o;
+        BnConnectOptions od = o;
         od.port = 0;
         od.timeout_ms = 0;
-        NbTls *td = nb_tls_connect(&od);
+        BnTls *td = bn_tls_connect(&od);
         CHECK(td != NULL, "port=0 → 443, timeout_ms=0 → 30000");
         if (td) {
-            nb_tls_close(&td);
+            bn_tls_close(&td);
         }
         /* свежесть ошибки: после успешной операции слот чист */
-        CHECK(nb_last_error_code() == 0,
+        CHECK(bn_last_error_code() == 0,
               "после успешного connect код ошибки 0, получен %d",
-              nb_last_error_code());
+              bn_last_error_code());
     }
 
     /* --- H3: use-after-close -------------------------------------------- */
-    NbH3 *h3 = nb_h3_connect(&o);
+    BnH3 *h3 = bn_h3_connect(&o);
     if (h3) {
-        NbH3Request *req = nb_h3_fetch(h3, "GET", "/", NULL, 0, NULL, 0, 15000);
+        BnH3Request *req = bn_h3_fetch(h3, "GET", "/", NULL, 0, NULL, 0, 15000);
         if (req) {
             /* закрыть СОЕДИНЕНИЕ, оставив запрос живым → осиротевание */
-            nb_h3_close(&h3);
+            bn_h3_close(&h3);
             CHECK(h3 == NULL, "h3_close nullified");
-            int rc = nb_h3_req_status(req);
+            int rc = bn_h3_req_status(req);
             CHECK(rc == -9, "req_status после close == -9, получен %d", rc);
-            rc = nb_h3_req_read(req, NULL, 0, 100);
+            rc = bn_h3_req_read(req, NULL, 0, 100);
             CHECK(rc == -9, "req_read после close == -9, получен %d", rc);
-            rc = nb_h3_req_header_count(req);
+            rc = bn_h3_req_header_count(req);
             CHECK(rc == -9, "req_header_count после close == -9, получен %d", rc);
-            nb_h3_req_free(&req);
+            bn_h3_req_free(&req);
             CHECK(req == NULL, "req_free nullified");
-            nb_h3_req_free(&req); /* двойной — no-op */
+            bn_h3_req_free(&req); /* двойной — no-op */
         } else {
-            printf("nb_h3_fetch FAILED: %s\n", nb_last_error_message());
-            nb_h3_close(&h3);
+            printf("bn_h3_fetch FAILED: %s\n", bn_last_error_message());
+            bn_h3_close(&h3);
         }
     } else {
-        printf("nb_h3_connect FAILED (сеть?): %s — пропуск H3-части\n",
-               nb_last_error_message());
+        printf("bn_h3_connect FAILED (сеть?): %s — пропуск H3-части\n",
+               bn_last_error_message());
     }
     printf("use-after-close OK\n");
 
     /* --- shutdown / re-init ---------------------------------------------- */
-    CHECK(nb_shutdown() == 0, "nb_shutdown при закрытых дескрипторах == 0");
-    CHECK(nb_shutdown() == 0, "повторный nb_shutdown == 0");
+    CHECK(bn_shutdown() == 0, "bn_shutdown при закрытых дескрипторах == 0");
+    CHECK(bn_shutdown() == 0, "повторный bn_shutdown == 0");
     /* использование до повторного init → -3 */
-    CHECK(nb_tls_connect(&o) == NULL, "connect после shutdown → NULL");
-    CHECK(nb_last_error_code() == 3, "код 3 NotInitialized, получен %d",
-          nb_last_error_code());
-    CHECK(nb_init(NULL, 0) == 0, "повторный nb_init после shutdown");
-    NbTls *tls2 = nb_tls_connect(&o);
+    CHECK(bn_tls_connect(&o) == NULL, "connect после shutdown → NULL");
+    CHECK(bn_last_error_code() == 3, "код 3 NotInitialized, получен %d",
+          bn_last_error_code());
+    CHECK(bn_init(NULL, 0) == 0, "повторный bn_init после shutdown");
+    BnTls *tls2 = bn_tls_connect(&o);
     CHECK(tls2 != NULL, "connect после re-init");
     if (tls2) {
-        nb_tls_close(&tls2);
+        bn_tls_close(&tls2);
     }
     printf("shutdown/re-init OK\n");
 

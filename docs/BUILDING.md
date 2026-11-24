@@ -1,6 +1,6 @@
-# Сборка neqo-backend
+# Сборка bangboo-net
 
-## Состав пиннованного стека
+## Состав закреплённого стека
 
 Компоненты зафиксированы на версиях сетевого стека Firefox; это же
 делает сборку воспроизводимой:
@@ -31,10 +31,10 @@ sudo apt install build-essential clang libclang-dev ninja-build \
 pip3 install --user gyp-next        # для сборки NSS
 ```
 
-* `clang/libclang` — нужен bindgen (и в nss-rs, и в neqo-backend).
+* `clang/libclang` — нужен bindgen (и в nss-rs, и в bangboo-net).
 * `gyp` + `ninja` — сборка NSS из исходников.
 * Никаких системных libnss3-dev НЕ требуется — NSS собирается из
-  пиннованного тарбола. Системный NSS 3.98 (Ubuntu 24.04) слишком
+  закреплённого тарбола. Системный NSS 3.98 (Ubuntu 24.04) слишком
   стар для nss-rs 0.16.3 (нужен >= 3.130).
 
 Android: дополнительно [Android NDK](https://developer.android.com/ndk)
@@ -53,7 +53,7 @@ scripts/fetch_nss.sh          # качает тарбол, проверяет sh
 Что делает скрипт:
 
 ```
-~/neqo-backend-deps/
+~/bangboo-net-deps/
   nss-3.134-with-nspr-4.41.tar.gz # исходный тарбол (89 МБ)
   nss-3.134/
     nss/                        # NSS_DIR — на него указывает сборка
@@ -67,7 +67,7 @@ scripts/fetch_nss.sh          # качает тарбол, проверяет sh
 Ручной эквивалент:
 
 ```bash
-mkdir -p ~/neqo-backend-deps && cd ~/neqo-backend-deps
+mkdir -p ~/bangboo-net-deps && cd ~/bangboo-net-deps
 curl -LO https://ftp.mozilla.org/pub/security/nss/releases/NSS_3_134_RTM/src/nss-3.134-with-nspr-4.41.tar.gz
 echo "d37c4871ec83d72f5b98450458d09eb57e068a0b148a7f7cf5f6fa928af9664f  nss-3.134-with-nspr-4.41.tar.gz" | sha256sum -c -
 tar xf nss-3.134-with-nspr-4.41.tar.gz
@@ -79,14 +79,14 @@ cd nss-3.134/nss
 Переменные окружения для всех команд cargo (скрипты ставят их сами):
 
 ```bash
-export NSS_DIR="$HOME/neqo-backend-deps/nss-3.134/nss"
+export NSS_DIR="$HOME/bangboo-net-deps/nss-3.134/nss"
 export NSS_PREBUILT=1          # не пересобирать NSS из cargo
 ```
 
 ## Шаг 2. Проверка компиляции
 
 ```bash
-cd neqo-backend
+cd bangboo-net
 NSS_DIR=... NSS_PREBUILT=1 cargo check
 ```
 
@@ -100,8 +100,9 @@ scripts/build_linux.sh i686      # 32-битный x86
 scripts/build_linux.sh aarch64   # ARM64 (cross: rustup target add + gcc-aarch64-linux-gnu)
 ```
 
-Артефакт: `libneqo_backend.so` (+ `.a`).
-Рантайм-зависимости: `libc`, `libstdc++` (от NSS-статики не зависит:
+Артефакт: `libbangboo_net.so` (+ `.a`).
+Зависимости времени исполнения: `libc`, `libstdc++` (от статической
+сборки NSS не зависит:
 NSS линкуется статически в debug; в release — динамически к собранному
 нами же NSS. Скрипт копирует нужные .so рядом и ставит rpath).
 
@@ -117,7 +118,7 @@ scripts/build_android.sh arm32   # armv7a-linux-androideabi
 1. кросс-собирает NSS теми же флагами clang'ом из NDK
    (`$TOOLCHAIN/bin/aarch64-linux-android24-clang` и т.п.);
 2. `cargo ndk`-стилем собирает cdylib для нужного API (24+);
-3. результат: `libneqo_backend.so` — кладётся в
+3. результат: `libbangboo_net.so` — кладётся в
    `android/app/src/main/jniLibs/<abi>/` приложения.
 
 NSS для Android-цели собирается в отдельный `dist_android_<abi>`
@@ -132,7 +133,7 @@ scripts/build_windows.sh x32
 
 Требуется `x86_64-pc-windows-msvc`/`i686-pc-windows-msvc` toolchain,
 Visual Studio Build Tools, LLVM (libclang). NSS для Windows собирается
-статически (так делает и nss-rs). Артефакт: `neqo_backend.dll` + `.lib`.
+статически (так делает и nss-rs). Артефакт: `bangboo_net.dll` + `.lib`.
 
 ## Офлайн-сборка (vendor)
 

@@ -1,4 +1,4 @@
-//! # neqo-backend
+//! # bangboo-net
 //!
 //! Прокладка для использования сетевого стека Firefox (NSS + neqo).
 //! Три пути:
@@ -6,7 +6,7 @@
 //!  * HTTPS over QUIC — HTTP/3 на стеке neqo (как в Firefox);
 //!  * WSS — WebSocket (RFC 6455) поверх TLS-сокета.
 //!
-//! Внешний контракт — C ABI (см. `ffi/neqo_backend.h` и модуль [`ffi`]).
+//! Внешний контракт — C ABI (см. `ffi/bangboo_net.h` и модуль [`ffi`]).
 //! Rust-слой изолирует приложение от изменений API NSS/neqo.
 
 #![allow(clippy::missing_safety_doc)] // FFI-функции: безопасность описана в .h
@@ -43,10 +43,10 @@ pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"));
 pub const NEQO_VERSION: &str = "0.34.0";
 pub const NSS_RS_VERSION: &str = "0.16.3";
 
-/// Строка версий для nb_version().
+/// Строка версий для bn_version().
 pub fn version_string() -> String {
     format!(
-        "neqo-backend {} (neqo {}, nss-rs {}, pinned NSS: см. docs/BUILDING.md)",
+        "bangboo-net {} (neqo {}, nss-rs {}, pinned NSS: см. docs/BUILDING.md)",
         VERSION, NEQO_VERSION, NSS_RS_VERSION
     )
 }

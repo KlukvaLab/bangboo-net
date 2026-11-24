@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Сборка neqo-backend для Desktop Windows (MSVC).
+# Сборка bangboo-net для Desktop Windows (MSVC).
 # Запускать из окружения MSVC (x64 Native Tools Command Prompt) или WSL с
 # установленным cargo-xwin; здесь вариант с cargo-xwin (кросс-сборка из Linux).
 #
@@ -12,8 +12,8 @@ set -euo pipefail
 
 ARCH="${1:-x64}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-export NSS_DEPS="${NSS_DEPS:-$HOME/neqo-backend-deps}"
-# Версия NSS (пиннинг — scripts/fetch_nss.sh). Windows-dist NSS нужно
+export NSS_DEPS="${NSS_DEPS:-$HOME/bangboo-net-deps}"
+# Версия NSS (закрепление — scripts/fetch_nss.sh). Windows-dist NSS нужно
 # собрать отдельно (см. docs/BUILDING.md).
 export NSS_VER="${NSS_VER:-3.134}"
 # nss-rs (и наш build.rs) ищут NSS в $NSS_DIR/../dist; экспортировать
@@ -43,9 +43,9 @@ fi
 
 OUT="$HERE/dist/windows-$ARCH"
 mkdir -p "$OUT"
-cp "target/$TARGET/release/neqo_backend.dll" "$OUT/" 2>/dev/null || true
-cp "target/$TARGET/release/neqo_backend.dll.lib" "$OUT/" 2>/dev/null || \
-    cp "target/$TARGET/release/neqo_backend.lib" "$OUT/" 2>/dev/null || true
-cp "$HERE/ffi/neqo_backend.h" "$OUT/"
+cp "target/$TARGET/release/bangboo_net.dll" "$OUT/" 2>/dev/null || true
+cp "target/$TARGET/release/bangboo_net.dll.lib" "$OUT/" 2>/dev/null || \
+    cp "target/$TARGET/release/bangboo_net.lib" "$OUT/" 2>/dev/null || true
+cp "$HERE/ffi/bangboo_net.h" "$OUT/"
 echo ">> Готово: $OUT"
 ls -la "$OUT"

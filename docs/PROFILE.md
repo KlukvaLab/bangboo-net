@@ -51,12 +51,12 @@ NSS по умолчанию настроен минимально — брауз
 | Delegated credentials | разрешены | pref security.tls.enable_delegated_credentials |
 | EMS / downgrade check | вкл | nsNSSComponent.cpp CommonInit |
 
-### Наборы шифров (wire-порядок задаёт NSS, не список!)
+### Наборы шифров (порядок в пакете задаёт NSS, не список!)
 
 Firefox в `InitializeCipherSuite()` сначала выключает ВСЕ шифры NSS,
 затем включает разрешённые префами. Мы повторяем буквально это.
 Порядок в ClientHello определяется порядком компиляции NSS
-(`ssl3con.c`) — ещё одна причина пиннить версию NSS.
+(`ssl3con.c`) — ещё одна причина закреплять версию NSS.
 
 Включены (release-канал):
 
@@ -78,7 +78,7 @@ NULL, EXPORT. Ошибки «cipher not implemented» при включении 
 
 ### Профили
 
-`NbConnectOptions.profile`:
+`BnConnectOptions.profile`:
 * `0` = **firefox-desktop**, `1` = **firefox-android**.
 
 Конфигурации совпадают: mlkem768x25519 включён и на Android —
@@ -106,12 +106,13 @@ security.tls.enable_kyber (fenix/app/nimbus.fml.yaml, default=null,
 
 * **Intolerance-память** — PSM запоминает per-host версию, «которую
   сервер терпит», на всю сессию браузера и сразу подключается с
-  пониженным максимумом; мы делаем один stateless-ретрай на
-  соединение (1.3 → 1.2). Wire при самом ретрае совпадает с Firefox.
-* **Happy Eyeballs** — TCP/TLS-путь: гонка адресов RFC 8305 (стаггер
-  300 мс, как network.http.fast-fallback-to-IPv4). QUIC-путь:
-  первый адрес (порядок RFC 6724); гонка QUIC↔TCP — это уровень
-  necko (приложения), не транспортной библиотеки.
+  пониженным максимумом; мы делаем один повтор без сохранения
+  состояния на соединение (1.3 → 1.2). Содержимое пакетов при
+  повторе совпадает с Firefox.
+* **Happy Eyeballs** — путь TCP + TLS: гонка адресов RFC 8305
+  (задержка старта 300 мс, как network.http.fast-fallback-to-IPv4).
+  QUIC-путь: первый адрес (порядок RFC 6724); гонка QUIC↔TCP — это
+  уровень necko (приложения), не транспортной библиотеки.
 * **SCSV** — TLS_FALLBACK_SCSV Firefox отправляет только при
   даунгрейде ниже TLS 1.2; наш минимум — 1.2, поэтому SCSV не
   нужен никогда (для 1.2-fallback действует downgrade-check).

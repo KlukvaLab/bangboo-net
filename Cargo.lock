@@ -33,6 +33,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "bangboo-net"
+version = "0.1.0"
+dependencies = [
+ "bindgen 0.71.1",
+ "brotli",
+ "flate2",
+ "neqo-common",
+ "neqo-http3",
+ "neqo-transport",
+ "nss-rs",
+ "pkg-config",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pemfile",
+ "zstd",
+]
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -515,24 +533,6 @@ dependencies = [
  "libc",
  "static_assertions",
  "windows",
-]
-
-[[package]]
-name = "neqo-backend"
-version = "0.1.0"
-dependencies = [
- "bindgen 0.71.1",
- "brotli",
- "flate2",
- "neqo-common",
- "neqo-http3",
- "neqo-transport",
- "nss-rs",
- "pkg-config",
- "rustls",
- "rustls-native-certs",
- "rustls-pemfile",
- "zstd",
 ]
 
 [[package]]
