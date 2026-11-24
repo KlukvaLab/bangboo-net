@@ -47,6 +47,11 @@ pub struct WsMessage {
 
 pub struct WsStream {
     tls: TlsStream,
+    /// Байты, пришедшие в одном пакете с ответом 101 Upgrade
+    /// (http1::send_request_and_read_head складывает их в resp.body).
+    /// Раньше они терялись: при первом кадре в том же TCP/TLS-пакете
+    /// фрейминг рассинхронизировался. Теперь читаются ПЕРВЫМИ.
+    rx: Vec<u8>,
     /// Текущий фрагментируемый кадр (opcode первого кадра).
     fragment: Option<Opcode>,
     fragment_buf: Vec<u8>,
@@ -142,9 +147,9 @@ impl WsStream {
                 "Sec-WebSocket-Accept не совпал",
             ));
         }
-        let _ = &mut resp;
         Ok(WsStream {
             tls,
+            rx: std::mem::take(&mut resp.body),
             fragment: None,
             fragment_buf: Vec::new(),
             pending: None,
@@ -232,6 +237,16 @@ impl WsStream {
             let opcode = Opcode::from_u8(opcode_raw)?;
             match opcode {
                 Opcode::Ping => {
+                    // RFC 6455 §5.5: payload control-кадра ≤ 125 байт.
+                    // Больший ping — нарушение протокола; эхоить нельзя
+                    // и потому, что pong > 125 сам собьёт фрейминг у
+                    // сервера.
+                    if payload.len() > 125 {
+                        return Err(Error::new(
+                            ErrorCode::ProtocolError,
+                            "ping с payload > 125 байт (RFC 6455 §5.5)",
+                        ));
+                    }
                     // Авто-pong (WebSocketChannel делает то же).
                     let rem = deadline.saturating_duration_since(Instant::now());
                     self.send(Opcode::Pong, &payload, rem)?;
@@ -248,8 +263,11 @@ impl WsStream {
                     let op = self.fragment.take().ok_or_else(|| {
                         Error::new(ErrorCode::ProtocolError, "continuation без начала")
                     })?;
-                    if self.fragment_buf.len() + payload.len() > max {
+                    // saturating_sub: при снятом лимите (usize::MAX)
+                    // сумма переполнилась бы и обходила проверку.
+                    if self.fragment_buf.len() > max.saturating_sub(payload.len()) {
                         self.fragment_buf.clear();
+                        self.fragment = None;
                         return Err(Error::too_large(format!(
                             "фрагментированное WS-сообщение превышает лимит {max} байт \
                              (bn_set_limits)"
@@ -265,6 +283,15 @@ impl WsStream {
                     self.fragment = Some(op);
                 }
                 op => {
+                    if self.fragment.is_some() {
+                        // RFC 6455 §5.6: новый data-кадр до конца
+                        // фрагментированного сообщения — нарушение;
+                        // прежняя версия молча затирала fragment_buf.
+                        return Err(Error::new(
+                            ErrorCode::ProtocolError,
+                            "новый data-кадр при незавершённом фрагментированном сообщении",
+                        ));
+                    }
                     if fin {
                         return Ok(WsMessage {
                             opcode: op,
@@ -288,17 +315,34 @@ impl WsStream {
     }
 
     fn read_exact(&mut self, n: usize, deadline: Instant) -> Result<Vec<u8>> {
-        let mut buf = vec![0u8; n];
+        // Рост по мере поступления данных. Прежний `vec![0u8; n]` при
+        // длине кадра от сервера (при снятом лимите — до u64::MAX)
+        // выделял память мгновенно по непроверенному размеру: OOM abort
+        // процесса, который catch_unwind на границе FFI не перехватывает.
+        const CHUNK_CAP: usize = 16 * 1024;
+        let mut buf = Vec::new();
+        let mut chunk = vec![0u8; CHUNK_CAP.min(n.max(1))];
         let mut got = 0usize;
         while got < n {
             let now = Instant::now();
             if now >= deadline {
                 return Err(Error::timeout("ws: таймаут чтения"));
             }
-            let r = self.tls.read(&mut buf[got..], deadline - now)?;
+            let want = (n - got).min(chunk.len());
+            // Сначала добираем байты, пришедшие вместе с handshake (rx),
+            // затем читаем из TLS.
+            let r = if self.rx.is_empty() {
+                self.tls.read(&mut chunk[..want], deadline - now)?
+            } else {
+                let take = want.min(self.rx.len());
+                chunk[..take].copy_from_slice(&self.rx[..take]);
+                self.rx.drain(..take);
+                take
+            };
             if r == 0 {
                 return Err(Error::new(ErrorCode::Closed, "TLS закрыт при чтении кадра"));
             }
+            buf.extend_from_slice(&chunk[..r]);
             got += r;
         }
         Ok(buf)
