@@ -69,6 +69,12 @@ pub fn send_request_and_read_head(
 ) -> Result<Response> {
     let deadline = Instant::now() + timeout;
 
+    // Проверка до сборки запроса: без неё method/target/authority и
+    // заголовки от C-вызывающего конкатенировались в запрос как есть,
+    // и `\r\n` в них инъектировал произвольные заголовки, открывая
+    // HTTP Request Smuggling на keep-alive-соединении.
+    validate_request(req)?;
+
     // --- Запрос ------------------------------------------------------------
     let mut head = String::with_capacity(256);
     head.push_str(req.method);
@@ -168,6 +174,55 @@ pub fn send_request_and_read_head(
     Ok(resp)
 }
 
+/// Проверить запрос до отправки (RFC 9110): метод и имена заголовков —
+/// токены, в target/authority нет ни управляющих символов, ни пробелов,
+/// в значениях заголовков — CR/LF/NUL. Content-Length и
+/// Transfer-Encoding от вызывающего отклоняются: фреймингом управляет
+/// библиотека (при body она дописывает свой Content-Length — чужой дал
+/// бы задвоение заголовка).
+fn validate_request(req: &Request<'_>) -> Result<()> {
+    if req.method.is_empty() || !req.method.bytes().all(is_tchar) {
+        return Err(Error::invalid_arg(format!(
+            "метод {:?} не токен RFC 9110",
+            req.method
+        )));
+    }
+    // ≤ 0x20 отсекает и управляющие символы, и пробел, ломающий
+    // request-line; 0x7F — DEL.
+    for (what, s) in [("target", req.target), ("authority", req.authority)] {
+        if s.is_empty() || s.bytes().any(|b| b <= 0x20 || b == 0x7F) {
+            return Err(Error::invalid_arg(format!(
+                "{what} пуст или содержит управляющие символы/пробел"
+            )));
+        }
+    }
+    for (n, v) in req.headers {
+        if n.is_empty() || !n.bytes().all(is_tchar) {
+            return Err(Error::invalid_arg(format!(
+                "имя заголовка {n:?} не токен RFC 9110"
+            )));
+        }
+        if v.bytes().any(|b| matches!(b, b'\r' | b'\n' | 0)) {
+            return Err(Error::invalid_arg(format!(
+                "значение заголовка {n:?} содержит CR/LF/NUL"
+            )));
+        }
+        if n.eq_ignore_ascii_case("content-length")
+            || n.eq_ignore_ascii_case("transfer-encoding")
+        {
+            return Err(Error::invalid_arg(
+                "Content-Length/Transfer-Encoding задаёт библиотека, не вызывающий",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Токен RFC 9110 (tchar): буквы, цифры и спецсимволы "!#$%&'*+-.^_`|~".
+fn is_tchar(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)
+}
+
 /// Дочитать тело ответа (по Content-Length, chunked или до EOF).
 /// Размер ограничен `bn_set_limits` (по умолчанию 64 МиБ): сервер,
 /// объявляющий сколь угодно большое тело, не может занять всю память
@@ -222,18 +277,28 @@ pub fn read_body(stream: &mut TlsStream, resp: &mut Response, timeout: Duration)
                 }
                 break;
             }
-            // Лимит: сам chunk и накопленное тело.
-            if out.len() + size > max {
+            // Лимит: сам chunk и накопленное тело. Сравнение через
+            // saturating_sub: `out.len() + size` при size из
+            // chunk-заголовка вида ffffffffffffffff переполнилось бы —
+            // в release молча (обход лимита), в debug паникой.
+            if size > max.saturating_sub(out.len()) {
                 return Err(Error::too_large(format!(
                     "chunked-тело превышает лимит {max} байт (bn_set_limits)"
                 )));
             }
-            // Дочитываем data + CRLF.
-            while raw.len() < after_size + size + 2 {
+            // Дочитываем data + CRLF. Конец чанка — только через
+            // checked-математику: размер приходит от сервера.
+            let end = after_size
+                .checked_add(size)
+                .and_then(|v| v.checked_add(2))
+                .ok_or_else(|| {
+                    Error::new(ErrorCode::ProtocolError, "chunked: переполнение размера")
+                })?;
+            while raw.len() < end {
                 read_more(stream, &mut raw, deadline)?;
             }
-            out.extend_from_slice(&raw[after_size..after_size + size]);
-            raw.drain(..after_size + size + 2);
+            out.extend_from_slice(&raw[after_size..end - 2]);
+            raw.drain(..end);
         }
         resp.body = out;
         return Ok(());
@@ -307,10 +372,15 @@ fn read_into(
     max: usize,
     deadline: Instant,
 ) -> Result<usize> {
-    let start = buf.len();
-    buf.resize(start + max, 0);
-    let n = stream.read(&mut buf[start..], remaining(deadline)?)?;
-    buf.truncate(start + n);
+    // Читаем кусок ≤16 КиБ и дописываем в конец. Прежний
+    // `buf.resize(start + max, 0)` выделял И заполнял нулями весь max
+    // заранее: при снятом лимите (0) Content-Length от сервера
+    // превращался в мгновенную аллокацию непроверенного размера (OOM).
+    const CHUNK: usize = 16 * 1024;
+    let mut chunk = [0u8; CHUNK];
+    let want = max.min(CHUNK);
+    let n = stream.read(&mut chunk[..want], remaining(deadline)?)?;
+    buf.extend_from_slice(&chunk[..n]);
     Ok(n)
 }
 
@@ -320,4 +390,52 @@ fn find_double_crlf(buf: &[u8]) -> Option<usize> {
 
 fn find_crlf(buf: &[u8]) -> Option<usize> {
     buf.windows(2).position(|w| w == b"\r\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn req<'a>(
+        method: &'a str,
+        target: &'a str,
+        authority: &'a str,
+        headers: &'a [HeaderPair],
+    ) -> Request<'a> {
+        Request {
+            method,
+            target,
+            authority,
+            headers,
+            body: None,
+            connection: ConnectionHeader::KeepAlive,
+        }
+    }
+
+    #[test]
+    fn validate_accepts_normal_request() {
+        let hs = vec![("Accept".to_string(), "*/*".to_string())];
+        assert!(validate_request(&req("GET", "/a?b=c", "example.com", &hs)).is_ok());
+        assert!(validate_request(&req("POST", "/upload", "example.com:8443", &[])).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_injection() {
+        // CRLF в значении заголовка.
+        let hs = vec![("X-Evil".to_string(), "1\r\nHost: evil".to_string())];
+        assert!(validate_request(&req("GET", "/", "example.com", &hs)).is_err());
+        // NUL в значении заголовка.
+        let nul = vec![("X-Null".to_string(), "a\0b".to_string())];
+        assert!(validate_request(&req("GET", "/", "example.com", &nul)).is_err());
+        // Пробел в методе ломает request-line.
+        assert!(validate_request(&req("GET /x", "/", "example.com", &[])).is_err());
+        // CRLF в target и в authority.
+        assert!(validate_request(&req("GET", "/a\r\nX: y", "example.com", &[])).is_err());
+        assert!(validate_request(&req("GET", "/", "exa\r\nmple", &[])).is_err());
+        // Фрейминг-заголовки задаёт библиотека, не вызывающий.
+        let cl = vec![("Content-Length".to_string(), "5".to_string())];
+        assert!(validate_request(&req("POST", "/", "example.com", &cl)).is_err());
+        let te = vec![("Transfer-Encoding".to_string(), "chunked".to_string())];
+        assert!(validate_request(&req("POST", "/", "example.com", &te)).is_err());
+    }
 }

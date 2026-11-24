@@ -93,10 +93,16 @@ pub struct BnH3Request {
     /// Соединение; NULL после bn_h3_close (осиротевший запрос).
     conn: AtomicPtr<BnH3>,
     stream_id: u64,
-    /// Клон билета соединения: пока запрос жив, ticket жив, а значит
-    /// bn_h3_close дождётся окончания операций и только потом освободит
-    /// Box<BnH3>.
+    /// Собственный билет запроса: операции держат read-lock,
+    /// bn_h3_req_free — write-lock. Без него free (read-lock на билете,
+    /// общем с соединением) не исключал параллельный req_read того же
+    /// запроса: Box освобождался во время чтения (UAF), а два free
+    /// с разными копиями указателя — двойное освобождение.
     ticket: TicketRef,
+    /// Клон билета соединения: пока запрос жив, билет жив, а значит
+    /// bn_h3_close дождётся окончания операций (они держат read-lock
+    /// и на этом билете) и только потом освободит Box<BnH3>.
+    conn_ticket: TicketRef,
 }
 pub struct BnHttpResponse {
     status: u16,
@@ -290,6 +296,7 @@ unsafe fn copy_header_pair(
     *name_buf.add(name.len()) = 0;
     ptr::copy_nonoverlapping(value.as_ptr(), value_buf, value.len());
     *value_buf.add(value.len()) = 0; // NUL для удобства printf/strcmp
+    // len() здесь всегда ≤ MAX_HEADER_BYTES (64 КиБ) — в c_int влезает.
     value.len() as c_int
 }
 
@@ -465,6 +472,12 @@ pub unsafe extern "C" fn bn_tls_read(
             }
         };
         let _rd = rd(&s.ticket);
+        // Возврат функции — c_int: длина больше i32::MAX представима
+        // только отрицательным числом (ложный «код ошибки»).
+        if len > c_int::MAX as u32 {
+            set_last_error_str("bn_tls_read: len превышает 2 ГиБ (ограничение c_int)");
+            return -(ErrorCode::InvalidArgument as c_int);
+        }
         if len == 0 {
             return 0; // читать нечего — не трогаем NULL-буфер
         }
@@ -495,6 +508,11 @@ pub unsafe extern "C" fn bn_tls_write(
             }
         };
         let _rd = rd(&s.ticket);
+        // Возврат функции — c_int (см. bn_tls_read).
+        if len > c_int::MAX as u32 {
+            set_last_error_str("bn_tls_write: len превышает 2 ГиБ (ограничение c_int)");
+            return -(ErrorCode::InvalidArgument as c_int);
+        }
         let data = match blob(buf, len) {
             Some(d) => d,
             None => {
@@ -730,6 +748,15 @@ pub unsafe extern "C" fn bn_http1_response_body(
             }
         };
         let _rd = rd(&r.ticket);
+        // Возврат функции — c_int (см. bn_tls_read); тело длиннее
+        // i32::MAX возможно только при снятом лимите bn_set_limits.
+        if r.body.len() > c_int::MAX as usize {
+            set_last_error(&Error::too_large(format!(
+                "тело ответа {} байт не представимо в c_int",
+                r.body.len()
+            )));
+            return -(ErrorCode::MessageTooLarge as c_int);
+        }
         match copy_out(out, out_cap, &r.body, false) {
             Ok(n) => n as c_int,
             Err(need) => too_small(needed, need),
@@ -847,6 +874,11 @@ pub unsafe extern "C" fn bn_ws_send(
             }
         };
         let _rd = rd(&w.ticket);
+        // Возврат функции — c_int (см. bn_tls_read).
+        if len > c_int::MAX as u32 {
+            set_last_error_str("bn_ws_send: len превышает 2 ГиБ (ограничение c_int)");
+            return -(ErrorCode::InvalidArgument as c_int);
+        }
         let op = match opcode {
             1 => Opcode::Text,
             2 => Opcode::Binary,
@@ -899,6 +931,17 @@ pub unsafe extern "C" fn bn_ws_recv(
         let mut g = lock(&w.inner);
         match g.recv(dur(timeout_ms)) {
             Ok(msg) => {
+                // Возврат функции — c_int: payload длиннее i32::MAX
+                // (возможен при снятом лимите) не представим — вернуть
+                // в очередь и сообщить ошибкой лимита.
+                if msg.payload.len() > c_int::MAX as usize {
+                    let need = msg.payload.len();
+                    g.stash(msg);
+                    set_last_error(&Error::too_large(format!(
+                        "WS-сообщение {need} байт не представимо в c_int"
+                    )));
+                    return -(ErrorCode::MessageTooLarge as c_int);
+                }
                 if msg.payload.len() > buf_cap as usize {
                     // Слишком мал: вернуть в очередь, сообщить нужный размер.
                     let need = msg.payload.len();
@@ -1038,7 +1081,8 @@ pub unsafe extern "C" fn bn_h3_fetch(
             let req = Box::into_raw(Box::new(BnH3Request {
                 conn: AtomicPtr::new(h as *const BnH3 as *mut BnH3),
                 stream_id: stream_id.as_u64(),
-                ticket: h.ticket.clone(),
+                ticket: new_ticket(),
+                conn_ticket: Arc::clone(&h.ticket),
             }));
             lock(&h.requests).push(req);
             Ok(req)
@@ -1060,7 +1104,12 @@ fn with_conn<T>(
     r: &BnH3Request,
     f: impl FnOnce(&BnH3) -> crate::error::Result<T>,
 ) -> crate::error::Result<T> {
-    let _rd = rd(&r.ticket);
+    // Read-lock собственного билета запроса: исключает параллельный
+    // bn_h3_req_free (write-lock) на всё время работы с дескриптором.
+    let _rd_req = rd(&r.ticket);
+    // Read-lock билета соединения: bn_h3_close (write-lock) дождётся
+    // нас, прежде чем обнулить conn и освободить Box<BnH3>.
+    let _rd_conn = rd(&r.conn_ticket);
     let conn = r.conn.load(Ordering::Acquire);
     if conn.is_null() {
         return Err(Error::new(
@@ -1180,6 +1229,10 @@ pub unsafe extern "C" fn bn_h3_req_read(
                 return -(ErrorCode::InvalidArgument as c_int);
             }
         };
+        if buf_cap > c_int::MAX as u32 {
+            set_last_error_str("bn_h3_req_read: buf_cap превышает 2 ГиБ (ограничение c_int)");
+            return -(ErrorCode::InvalidArgument as c_int);
+        }
         let res = with_conn(r, |h| {
             let mut inner = lock(&h.inner);
             if buf_cap == 0 {
@@ -1195,7 +1248,16 @@ pub unsafe extern "C" fn bn_h3_req_read(
             }
         });
         match res {
-            Ok(n) => n as c_int,
+            // «Драйв»-вызов (buf_cap == 0) возвращает размер накопленного
+            // тела безотносительно буфера — не дать ему стать
+            // отрицательным c_int.
+            Ok(n) if n <= c_int::MAX as usize => n as c_int,
+            Ok(n) => {
+                set_last_error(&Error::too_large(format!(
+                    "накопленное тело {n} байт не представимо в c_int"
+                )));
+                -(ErrorCode::MessageTooLarge as c_int)
+            }
             Err(e) => err_code(&e),
         }
     })
@@ -1216,11 +1278,22 @@ pub unsafe extern "C" fn bn_h3_req_free(r: *mut *mut BnH3Request) {
         let rref = &*p;
         // Клон Arc билета — защита от UAF при unlock (см. bn_tls_close).
         let ticket = Arc::clone(&rref.ticket);
-        let _rd = rd(&ticket);
+        // Write-lock СОБСТВЕННОГО билета (раньше был read-lock, который
+        // не исключал параллельный bn_h3_req_read: UAF и двойной free).
+        let _wr_req = wr(&ticket);
+        // Read-lock билета соединения: не пересекаться с bn_h3_close,
+        // который под write-lock обнуляет conn и освобождает Box<BnH3>.
+        let conn_ticket = Arc::clone(&rref.conn_ticket);
+        let _rd_conn = rd(&conn_ticket);
         let conn = rref.conn.load(Ordering::Acquire);
         if !conn.is_null() {
             let href = unsafe { &*conn };
+            // Убрать дескриптор из списка живых запросов соединения…
             lock(&href.requests).retain(|x| *x != p);
+            // …и состояние запроса из H3Connection::requests: раньше оно
+            // жило до bn_h3_close (заголовки + непрочитанное тело — до
+            // лимита, 64 МиБ, на каждый запрос на долгоживущем H3).
+            lock(&href.inner).finish_request(StreamId::from(rref.stream_id));
         }
         drop(Box::from_raw(p));
         *r = ptr::null_mut();

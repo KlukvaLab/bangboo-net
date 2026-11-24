@@ -58,9 +58,24 @@ pub fn init(pem_roots: Option<&[u8]>) -> Result<()> {
     if g.is_some() {
         return Ok(());
     }
-    let ctx = init_inner(pem_roots)?;
-    *g = Some(ctx);
-    Ok(())
+    match init_inner(pem_roots) {
+        Ok(ctx) => {
+            *g = Some(ctx);
+            Ok(())
+        }
+        Err(e) => {
+            // Откат: не оставлять поднятый NSS после неудачного bn_init
+            // (ошибка в PEM/системных корнях). После ошибки вызывающий
+            // bn_shutdown не зовёт — без отката NSS висел бы в памяти
+            // процесса до выхода, а NSS_OWNED навсегда говорил «наше».
+            if NSS_OWNED.load(Ordering::Acquire)
+                && unsafe { nssx::NSS_Shutdown() } == SECSuccess
+            {
+                NSS_OWNED.store(false, Ordering::Release);
+            }
+            Err(e)
+        }
+    }
 }
 
 /// Доступ к верификатору (после успешного `init`).
@@ -81,11 +96,19 @@ pub fn global() -> Result<Arc<WebPkiServerVerifier>> {
 /// Возвращает ошибку, если `NSS_Shutdown` не удался — NSS держат
 /// незакрытые ресурсы (сокеты/соединения): закройте все дескрипторы
 /// и повторите. В этом случае выгружать .so (dlclose) нельзя.
+///
+/// Операции, начавшиеся параллельно с `bn_shutdown`, не защищены:
+/// такое соединение получит ошибку NSS/NSPR (не UB); при живых
+/// дескрипторах `NSS_Shutdown` просто не удастся.
 pub fn shutdown() -> Result<()> {
-    {
-        let mut g = lock_global();
-        *g = None; // дроп верификатора
-    }
+    // NSS_Shutdown под тем же замком, что и init: иначе в окно между
+    // `*g = None` и NSS_Shutdown параллельный bn_init успевал увидеть
+    // поднятый NSS, не стать владельцем (NSS_OWNED не выставлялся) и
+    // записать GLOBAL=Some — и NSS выключался у «инициализированной»
+    // библиотеки. Под замком bn_init дождётся конца выключения и
+    // поднимет NSS заново.
+    let mut g = lock_global();
+    *g = None; // дроп верификатора
     if NSS_OWNED.load(Ordering::Acquire) {
         if unsafe { nssx::NSS_Shutdown() } == SECSuccess {
             NSS_OWNED.store(false, Ordering::Release);
@@ -104,10 +127,9 @@ pub fn shutdown() -> Result<()> {
 }
 
 fn init_inner(pem_roots: Option<&[u8]>) -> Result<GlobalContext> {
-    // 1. NSS (NSS_NoDB_Init + NSS_SetDomesticPolicy + проверка версии).
-    ensure_nss()?;
-
-    // 2. Корневые сертификаты.
+    // 1. Корневые сертификаты — ДО подъёма NSS: разбор PEM и системного
+    //    хранилища NSS не требует, и ошибка здесь не должна оставлять
+    //    после себя поднятый NSS (страховка — откат в init()).
     let mut roots = RootCertStore::empty();
     let mut loaded = 0usize;
     if let Some(pem) = pem_roots {
@@ -141,11 +163,15 @@ fn init_inner(pem_roots: Option<&[u8]>) -> Result<GlobalContext> {
         ));
     }
 
-    // 3. Верификатор цепочек (алгоритмы подписей из ring-провайдера rustls).
+    // 2. Верификатор цепочек (алгоритмы подписей из ring-провайдера rustls).
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let verifier = WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider)
         .build()
         .map_err(|e| Error::new(ErrorCode::Generic, format!("verifier: {e}")))?;
+
+    // 3. NSS — последним (NSS_NoDB_Init + NSS_SetDomesticPolicy + проверка
+    //    версии): всё, что может упасть без NSS, уже сделано.
+    ensure_nss()?;
 
     Ok(GlobalContext { verifier })
 }

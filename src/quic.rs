@@ -57,6 +57,10 @@ pub struct H3Connection {
     remote: SocketAddr,
     host: String,
     resumption_token: Option<Vec<u8>>,
+    /// Причина неудачи верификации сертификата (из AuthenticationNeeded):
+    /// сообщается при закрытии соединения вместо безликого «закрыто
+    /// пиром» — раньше Err верификатора отбрасывался через is_ok().
+    cert_error: Option<String>,
     requests: HashMap<StreamId, H3RequestState>,
 }
 
@@ -129,6 +133,7 @@ impl H3Connection {
             remote,
             host: p.host.to_string(),
             resumption_token: None,
+            cert_error: None,
             requests: HashMap::new(),
         };
 
@@ -183,6 +188,37 @@ impl H3Connection {
             )
             .map_err(map_neqo("fetch"))?;
 
+        if let Err(e) = self.send_body_and_close(stream_id, body, deadline) {
+            // Лучшее-усилие: погасить поток (STOP_SENDING), чтобы при
+            // ошибке отправки тела он не оставался открытым в neqo до
+            // закрытия всего соединения (утечка потока на долгоживущем H3).
+            let _ = self.client.stream_stop_sending(stream_id, 0x10C);
+            let _ = self.client.stream_close_send(stream_id, Instant::now());
+            return Err(e);
+        }
+
+        self.requests.insert(
+            stream_id,
+            H3RequestState {
+                stream_id,
+                status: None,
+                headers: Vec::new(),
+                body: Vec::new(),
+                body_fin: false,
+                headers_ready: false,
+                error: None,
+            },
+        );
+        Ok(stream_id)
+    }
+
+    /// Отправить тело и закрыть send-сторону потока.
+    fn send_body_and_close(
+        &mut self,
+        stream_id: StreamId,
+        body: Option<&[u8]>,
+        deadline: Instant,
+    ) -> Result<()> {
         if let Some(b) = body {
             if !b.is_empty() {
                 let mut sent = 0usize;
@@ -202,20 +238,20 @@ impl H3Connection {
         self.client
             .stream_close_send(stream_id, Instant::now())
             .map_err(map_neqo("stream_close_send"))?;
+        Ok(())
+    }
 
-        self.requests.insert(
-            stream_id,
-            H3RequestState {
-                stream_id,
-                status: None,
-                headers: Vec::new(),
-                body: Vec::new(),
-                body_fin: false,
-                headers_ready: false,
-                error: None,
-            },
-        );
-        Ok(stream_id)
+    /// Убрать состояние запроса (вызывается из bn_h3_req_free). Раньше
+    /// оно жило до bn_h3_close: на долгоживущем соединении копились
+    /// заголовки и непрочитанное тело каждого запроса (до лимита,
+    /// 64 МиБ по умолчанию). Непрочитанный поток гасим
+    /// (H3_REQUEST_CANCELLED, RFC 9114), чтобы сервер не досылал тело.
+    pub fn finish_request(&mut self, stream_id: StreamId) {
+        let fin = self.requests.get(&stream_id).is_some_and(|st| st.body_fin);
+        if !fin {
+            let _ = self.client.stream_stop_sending(stream_id, 0x10C);
+        }
+        self.requests.remove(&stream_id);
     }
 
     /// Дождаться заголовков ответа (status + headers).
@@ -313,6 +349,12 @@ impl H3Connection {
             // (busy-loop, 100% CPU), потому что process_output для
             // закрытого соединения не даёт ни датаграмм, ни таймеров.
             if matches!(self.client.state(), Http3State::Closed(_)) {
+                // Сначала причина от верификации сертификата, если была:
+                // закрытие после CertUntrusted иначе маскировалось под
+                // «закрыто пиром», а детали ошибки отбрасывались.
+                if let Some(msg) = self.cert_error.take() {
+                    return Err(Error::new(ErrorCode::CertificateInvalid, msg));
+                }
                 return Err(Error::new(
                     ErrorCode::Closed,
                     "HTTP/3 соединение закрыто пиром",
@@ -426,14 +468,25 @@ impl H3Connection {
                         .peer_certificate()
                         .map(|info| info.into_iter().map(|c| c.to_vec()).collect())
                         .unwrap_or_default();
-                    let status = if verify::verify_server_chain(&chain, &self.host).is_ok() {
-                        nss::AuthenticationStatus::Ok
-                    } else {
-                        // Детали ошибки уже в bn_last_error_message;
-                        // neqo требует лишь «доверяем/не доверяем».
-                        nss::AuthenticationStatus::CertUntrusted
-                    };
-                    self.client.authenticated(status, Instant::now());
+                    // neqo требует лишь «доверяем/не доверяем», но Err
+                    // верификатора не отбрасываем: сохраняем сообщение —
+                    // оно станет ошибкой закрытия соединения (см.
+                    // drive_until). Прежняя версия теряла детали через
+                    // .is_ok(), а комментарий обещал LAST_ERROR, куда
+                    // verify_server_chain ничего не пишет.
+                    match verify::verify_server_chain(&chain, &self.host) {
+                        Ok(()) => {
+                            self.client
+                                .authenticated(nss::AuthenticationStatus::Ok, Instant::now());
+                        }
+                        Err(e) => {
+                            self.cert_error = Some(e.to_string());
+                            self.client.authenticated(
+                                nss::AuthenticationStatus::CertUntrusted,
+                                Instant::now(),
+                            );
+                        }
+                    }
                 }
                 Http3ClientEvent::HeaderReady {
                     stream_id,
@@ -473,7 +526,8 @@ impl H3Connection {
                             .read_data(Instant::now(), stream_id, &mut chunk)
                             .map_err(map_neqo("read_data"))?;
                         if let Some(st) = self.requests.get_mut(&stream_id) {
-                            if st.body.len() + n > max {
+                            // saturating_sub: сумма не должна переполняться.
+                            if st.body.len() > max.saturating_sub(n) {
                                 st.error = Some(Error::too_large(format!(
                                     "тело HTTP/3-ответа превышает лимит {max} байт \
                                      (bn_set_limits)"

@@ -127,7 +127,11 @@ impl TlsStream {
         let deadline = Instant::now() + timeout;
         unsafe {
             loop {
-                let n = nssx::PR_Read(self.fd, buf.as_mut_ptr().cast(), buf.len() as c_int);
+                // PR_Read принимает c_int: буфер длиннее i32::MAX
+                // (возможен из bn_tls_read, len — u32) режем до
+                // c_int::MAX, иначе в NSPR уходит отрицательная длина.
+                let want = buf.len().min(c_int::MAX as usize);
+                let n = nssx::PR_Read(self.fd, buf.as_mut_ptr().cast(), want as c_int);
                 if n > 0 {
                     return Ok(n as usize);
                 }
@@ -153,14 +157,22 @@ impl TlsStream {
         let mut off = 0usize;
         unsafe {
             while off < buf.len() {
-                let n = nssx::PR_Write(
-                    self.fd,
-                    buf[off..].as_ptr().cast(),
-                    (buf.len() - off) as c_int,
-                );
-                if n >= 0 {
+                if Instant::now() >= deadline {
+                    return Err(Error::timeout("write_all: таймаут"));
+                }
+                // Кусок ≤ i32::MAX: PR_Write принимает c_int, а длина из
+                // bn_tls_write — u32 (отрицательная длина недопустима).
+                let want = (buf.len() - off).min(c_int::MAX as usize);
+                let n = nssx::PR_Write(self.fd, buf[off..].as_ptr().cast(), want as c_int);
+                if n > 0 {
                     off += n as usize;
                     continue;
+                }
+                if n == 0 {
+                    // «Записано 0» при ненулевом куске — иначе цикл
+                    // крутился вхолостую (off += 0) без проверки дедлайна.
+                    self.closed = true;
+                    return Err(Error::new(ErrorCode::Generic, "PR_Write: 0 байт записано"));
                 }
                 let err = nssx::PR_GetError();
                 if err == nssx::PR_WOULD_BLOCK_ERROR {
@@ -302,7 +314,7 @@ unsafe fn try_connect(
 
     // 3. ALPN (SSL_SetNextProtoNego — это и есть ALPN-API NSS).
     if let Some(list) = p.alpn {
-        let wire = alpn_wire(list);
+        let wire = alpn_wire(list)?;
         if nssx::SSL_SetNextProtoNego(fd.raw(), wire.as_ptr(), wire.len() as c_uint)
             != SECSuccess
         {
@@ -654,15 +666,26 @@ fn netaddr_from(addr: &SocketAddr) -> nssx::PRNetAddr {
     unsafe { std::ptr::read(buf.as_ptr() as *const nssx::PRNetAddr) }
 }
 
-/// ALPN-список в wire-формате: длина-байт + протокол.
-fn alpn_wire(list: &[&str]) -> Vec<u8> {
+/// ALPN-список в wire-формате: длина-байт + протокол. Длина — 1 байт,
+/// поэтому протокол обязан быть 1..=255 байт: прежняя версия молча
+/// обрезала старшие байты длины, портя wire-буфер для
+/// SSL_SetNextProtoNego.
+fn alpn_wire(list: &[&str]) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     for p in list {
         let b = p.as_bytes();
+        if b.is_empty() || b.len() > 255 {
+            return Err(Error::invalid_arg(format!(
+                "ALPN-протокол {p:?}: длина должна быть 1..=255 байт"
+            )));
+        }
         out.push(b.len() as u8);
         out.extend_from_slice(b);
     }
-    out
+    if out.is_empty() {
+        return Err(Error::invalid_arg("пустой ALPN-список"));
+    }
+    Ok(out)
 }
 
 /// Колбэк верификации для NSS (аналог AuthCertificate в PSM).
@@ -746,4 +769,26 @@ unsafe fn resolve_experimental<F: Copy>(name: &std::ffi::CStr) -> Option<F> {
     }
     let raw: unsafe extern "C" fn() = std::mem::transmute(p);
     Some(unsafe { std::mem::transmute_copy::<_, F>(&raw) })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alpn_wire_ok() {
+        let w = alpn_wire(&["h2", "http/1.1"]).expect("валидный список");
+        assert_eq!(
+            w,
+            vec![2, b'h', b'2', 8, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1']
+        );
+    }
+
+    #[test]
+    fn alpn_wire_rejects_bad() {
+        assert!(alpn_wire(&[""]).is_err());
+        assert!(alpn_wire(&[]).is_err());
+        let long = "x".repeat(256);
+        assert!(alpn_wire(&[long.as_str()]).is_err());
+    }
 }
